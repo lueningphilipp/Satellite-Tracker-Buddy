@@ -33,17 +33,19 @@ def fetch_omm(norad):
     """Fetch orbital elements as OMM/CSV rather than legacy TLE text: catalog
     numbers >=100000 (newly launched objects) don't fit the TLE format's
     fixed 5-digit satellite-number field, so CelesTrak 404s FORMAT=tle/3le
-    for them while CSV/JSON still work fine."""
+    for them while CSV/JSON still work fine.
+    Returns (fields, online) - `online` is False whenever we had to fall back
+    to the stale hardcoded data, so callers/displays can show that."""
     url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad}&FORMAT=csv"
     try:
         txt = urllib.request.urlopen(url, timeout=10).read().decode()
         rows = list(omm.parse_csv(io.StringIO(txt)))
         if not rows:
             raise ValueError("No GP data found")
-        return rows[0]
+        return rows[0], True
     except Exception as e:
         print("Orbital element fetch failed, using fallback:", e)
-        return dict(FALLBACK_OMM)
+        return dict(FALLBACK_OMM), False
 
 def fetch_launch_date(norad):
     """Launch date isn't part of the OMM/CSV element set, so pull it
@@ -109,9 +111,10 @@ def classify_orbit(apogee, perigee, incl, period):
     return "MEO" if alt < 35000 else "HEO"
 
 class Sat:
-    def __init__(self, fields, launch_date=None):
+    def __init__(self, fields, launch_date=None, online=True):
         self.name = fields["OBJECT_NAME"].strip()
         self.launch_date = launch_date
+        self.online = online   # False if we had to fall back to stale hardcoded data
         self.rec = Satrec()
         omm.initialize(self.rec, fields)
         n = float(fields["MEAN_MOTION"]) * 2*math.pi/86400   # rad/s
@@ -203,6 +206,10 @@ class LedFrame:            # 1: 16x16 WS2812 behind a printed map, plus OLED
                                f"APO {sat.apogee:5.0f} km  PERI {sat.perigee:5.0f} km",
                                now.strftime("%H:%M:%S UTC"), age_line]):
             scr.blit(font.render(t, True, (120, 200, 255)), (o.x+8, o.y+6+i*20))
+        # minimalistic online/offline dot, next to the clock row
+        cy = o.y+6+2*20+8
+        pygame.draw.circle(scr, (60,200,110) if sat.online else (200,80,70), (o.right-16, cy), 5,
+                            0 if sat.online else 2)
 
 class Hub75:               # 2: 64x32 RGB matrix, bottom 8 rows text
     W, H, PIX = 64, 32, 12
@@ -236,7 +243,7 @@ class Hub75:               # 2: 64x32 RGB matrix, bottom 8 rows text
                 pygame.draw.circle(scr, buf[y][x], (ox+x*s.PIX+s.PIX//2, oy+y*s.PIX+s.PIX//2), s.PIX//2-1)
 
 class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
-    W, H = 800, 480
+    W, H, MH = 800, 480, 400   # MH = map height within the cached image
     def __init__(s):
         s.land = land_grid(360, 180); s.last = None; s.cache = None
     def size(s): return (s.W+60, s.H+60)
@@ -246,9 +253,28 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
             s.cache = s.render(sat, now, sun); s.last = now
         scr.blit(s.cache, (30, 30))
         pygame.draw.rect(scr, (60,60,60), (30,30,s.W,s.H), 3)
+        # Live clock + online dot: drawn straight to scr, *not* into the
+        # cached e-ink surface above, so they tick every frame even though
+        # the panel content itself only redraws every 5 min (that's the real
+        # e-paper constraint, not a bug). Placed inside the frame, in the
+        # same top-right slot the old frozen timestamp used to sit in. Pure
+        # black ink only (filled = online, outline = offline) - a real e-ink
+        # panel has no green/red to spend on this, on hardware this dot would
+        # be driven by a small status LED near the button instead.
+        label = "ONLINE" if sat.online else "OFFLINE"
+        lw, lh = font.size(label)
+        r, gap = 6, 10
+        x1 = 30 + s.W - 20                         # right edge inside the frame
+        x0 = x1 - (2*r + gap + lw)
+        ty = 30 + s.MH + 12
+        cx, cy = x0+r, ty+lh//2
+        pygame.draw.circle(scr, (0,0,0), (cx, cy), r, 0 if sat.online else 2)
+        scr.blit(font.render(label, True, (0,0,0)), (x0+2*r+gap, ty))
+        clock = font.render(now.strftime("LIVE %H:%M:%S UTC"), True, (0,0,0))
+        scr.blit(clock, (x1-lw-2*r-gap-10-clock.get_width(), ty))
     def render(s, sat, now, sun):
         surf = pygame.Surface((s.W, s.H)); surf.fill((250, 250, 250))
-        mw, mh = s.W, 400; sx, sy = mw/360, mh/180
+        mw, mh = s.W, s.MH; sx, sy = mw/360, mh/180
         for y in range(180):
             for x in range(360):
                 if s.land[y][x]: pygame.draw.rect(surf, (40,40,40), (x*sx, y*sy, sx+1, sy+1))
@@ -289,7 +315,6 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
         age = sat.age(now)
         if age: info += f"    In space {age[0]:.0f} d ({age[1]:.1f} yr)"
         surf.blit(small.render(info, True, (0,0,0)), (20, mh+50))
-        surf.blit(small.render(now.strftime("Updated %Y-%m-%d %H:%M UTC"), True, (90,90,90)), (mw-330, mh+12))
         return surf
 
 # ---------- main ----------
@@ -298,11 +323,12 @@ def main():
     norad = args[0] if args else "100614"
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
-    fields = fetch_omm(norad)
+    fields, online = fetch_omm(norad)
     name = fetch_name(norad, load_secrets().get("n2yo_api_key"))
     if name: fields["OBJECT_NAME"] = name
-    sat = Sat(fields, fetch_launch_date(norad))
+    sat = Sat(fields, fetch_launch_date(norad), online)
     print(f"{sat.name}: apogee {sat.apogee:.0f} km, perigee {sat.perigee:.0f} km, period {sat.period:.1f} min")
+    if not online: print("  (offline - showing stale fallback data)")
     age = sat.age(datetime.now(timezone.utc))
     if age: print(f"  in space {age[0]:.0f} days ({age[1]:.1f} years)")
 
