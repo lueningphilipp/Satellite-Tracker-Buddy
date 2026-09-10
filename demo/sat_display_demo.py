@@ -232,6 +232,14 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
         p = sat.latlon(now)
         if p:
             x, y = proj(p[0], p[1], mw, mh)
+            # "you are here" reticle: a quiet halo clears the map/track ink
+            # right around the point so the dot doesn't blend in, then a thin
+            # ring + crosshair ticks make it easy to spot without covering
+            # much extra area (halo is unfilled apart from a light fill).
+            pygame.draw.circle(surf, (250,250,250), (x,y), 16)
+            pygame.draw.circle(surf, (0,0,0), (x,y), 16, 2)
+            for dx, dy in ((-1,0), (1,0), (0,-1), (0,1)):
+                pygame.draw.line(surf, (0,0,0), (x+dx*11,y+dy*11), (x+dx*16,y+dy*16), 2)
             pygame.draw.circle(surf, (0,0,0), (x,y), 9); pygame.draw.circle(surf, (250,250,250), (x,y), 5)
         pygame.draw.line(surf, (0,0,0), (0, mh), (mw, mh), 2)
         big = pygame.font.SysFont("dejavuserif", 30, bold=True); small = pygame.font.SysFont("dejavusans", 20)
