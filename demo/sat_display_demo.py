@@ -11,7 +11,7 @@ Satellite display demo - simulates the three proposed builds on your PC.
 Keys:  1 = 16x16 LED map frame   2 = 64x32 HUB75 panel   3 = 7.5" e-paper
        +/- = time speed          space = real time        q = quit
 """
-import sys, io, json, math, base64, time, urllib.request
+import sys, os, io, json, math, base64, time, urllib.request
 from datetime import datetime, timedelta, timezone
 import pygame
 from sgp4.api import Satrec, jday
@@ -29,13 +29,6 @@ FALLBACK_OMM = {  # ISS, used if CelesTrak is unreachable (epoch will be stale)
     "BSTAR": ".98181333E-4", "MEAN_MOTION_DOT": ".4975E-4", "MEAN_MOTION_DDOT": "0",
 }
 
-NAME_OVERRIDES = {  # CelesTrak lists these under a generic placeholder name
-                     # ("OBJECT F" etc.) until the operator-reported name gets
-                     # folded in. Hardcode the real ones here for now, until
-                     # we pull from another API that already resolves them.
-    "100614": "SPECTRUM",
-}
-
 def fetch_omm(norad):
     """Fetch orbital elements as OMM/CSV rather than legacy TLE text: catalog
     numbers >=100000 (newly launched objects) don't fit the TLE format's
@@ -47,10 +40,7 @@ def fetch_omm(norad):
         rows = list(omm.parse_csv(io.StringIO(txt)))
         if not rows:
             raise ValueError("No GP data found")
-        fields = rows[0]
-        if str(norad) in NAME_OVERRIDES:
-            fields["OBJECT_NAME"] = NAME_OVERRIDES[str(norad)]
-        return fields
+        return rows[0]
     except Exception as e:
         print("Orbital element fetch failed, using fallback:", e)
         return dict(FALLBACK_OMM)
@@ -66,6 +56,38 @@ def fetch_launch_date(norad):
         return datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc) if d else None
     except Exception as e:
         print("Launch date fetch failed:", e)
+        return None
+
+# ---------- local secrets (gitignored, never committed - see .gitignore) ----------
+# On the firmware this becomes one more field in the NVS config set via the
+# WiFi setup page, alongside the WiFi creds, NORAD id and site lat/lon.
+SECRETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secrets.local.json")
+def load_secrets():
+    try:
+        with open(SECRETS_PATH) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"Couldn't read {SECRETS_PATH}:", e)
+        return {}
+
+def fetch_name(norad, api_key):
+    """Best-effort display name via n2yo. n2yo curates real names (e.g.
+    "SPECTRUM") faster than CelesTrak folds them into its official catalog
+    for freshly-launched, multi-payload objects - CelesTrak may still show a
+    generic "OBJECT F" for days/weeks. One lookup per satellite selection
+    (not per frame), well under n2yo's free-tier rate limit. Returns None on
+    any failure/missing key so the caller keeps CelesTrak's own name."""
+    if not api_key:
+        return None
+    url = f"https://api.n2yo.com/rest/v1/satellite/tle/{norad}&apiKey={api_key}"
+    try:
+        data = json.loads(urllib.request.urlopen(url, timeout=10).read().decode())
+        name = data.get("info", {}).get("satname")
+        return name.strip() if name else None
+    except Exception as e:
+        print("n2yo name lookup failed, keeping CelesTrak name:", e)
         return None
 
 # ---------- orbit maths ----------
@@ -258,7 +280,10 @@ def main():
     norad = args[0] if args else "100614"
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
-    sat = Sat(fetch_omm(norad), fetch_launch_date(norad))
+    fields = fetch_omm(norad)
+    name = fetch_name(norad, load_secrets().get("n2yo_api_key"))
+    if name: fields["OBJECT_NAME"] = name
+    sat = Sat(fields, fetch_launch_date(norad))
     print(f"{sat.name}: apogee {sat.apogee:.0f} km, perigee {sat.perigee:.0f} km, period {sat.period:.1f} min")
     age = sat.age(datetime.now(timezone.utc))
     if age: print(f"  in space {age[0]:.0f} days ({age[1]:.1f} years)")
