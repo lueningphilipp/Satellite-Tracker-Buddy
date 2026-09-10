@@ -11,7 +11,7 @@ Satellite display demo - simulates the three proposed builds on your PC.
 Keys:  1 = 16x16 LED map frame   2 = 64x32 HUB75 panel   3 = 7.5" e-paper
        +/- = time speed          space = real time        q = quit
 """
-import sys, io, math, base64, time, urllib.request
+import sys, io, json, math, base64, time, urllib.request
 from datetime import datetime, timedelta, timezone
 import pygame
 from sgp4.api import Satrec, jday
@@ -29,6 +29,13 @@ FALLBACK_OMM = {  # ISS, used if CelesTrak is unreachable (epoch will be stale)
     "BSTAR": ".98181333E-4", "MEAN_MOTION_DOT": ".4975E-4", "MEAN_MOTION_DDOT": "0",
 }
 
+NAME_OVERRIDES = {  # CelesTrak lists these under a generic placeholder name
+                     # ("OBJECT F" etc.) until the operator-reported name gets
+                     # folded in. Hardcode the real ones here for now, until
+                     # we pull from another API that already resolves them.
+    "100614": "SPECTRUM",
+}
+
 def fetch_omm(norad):
     """Fetch orbital elements as OMM/CSV rather than legacy TLE text: catalog
     numbers >=100000 (newly launched objects) don't fit the TLE format's
@@ -40,16 +47,33 @@ def fetch_omm(norad):
         rows = list(omm.parse_csv(io.StringIO(txt)))
         if not rows:
             raise ValueError("No GP data found")
-        return rows[0]
+        fields = rows[0]
+        if str(norad) in NAME_OVERRIDES:
+            fields["OBJECT_NAME"] = NAME_OVERRIDES[str(norad)]
+        return fields
     except Exception as e:
         print("Orbital element fetch failed, using fallback:", e)
         return dict(FALLBACK_OMM)
 
+def fetch_launch_date(norad):
+    """Launch date isn't part of the OMM/CSV element set, so pull it
+    separately from CelesTrak's satcat. Best-effort: on any failure we just
+    don't show time-in-space rather than blocking startup on it."""
+    url = f"https://celestrak.org/satcat/records.php?CATNR={norad}&FORMAT=json"
+    try:
+        rows = json.loads(urllib.request.urlopen(url, timeout=10).read().decode())
+        d = rows[0]["LAUNCH_DATE"]
+        return datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc) if d else None
+    except Exception as e:
+        print("Launch date fetch failed:", e)
+        return None
+
 # ---------- orbit maths ----------
 MU, RE = 398600.4418, 6371.0
 class Sat:
-    def __init__(self, fields):
+    def __init__(self, fields, launch_date=None):
         self.name = fields["OBJECT_NAME"].strip()
+        self.launch_date = launch_date
         self.rec = Satrec()
         omm.initialize(self.rec, fields)
         n = float(fields["MEAN_MOTION"]) * 2*math.pi/86400   # rad/s
@@ -57,6 +81,12 @@ class Sat:
         a = (MU / n**2) ** (1/3)
         self.apogee, self.perigee = a*(1+e)-RE, a*(1-e)-RE
         self.incl, self.period = float(fields["INCLINATION"]), 2*math.pi/n/60
+
+    def age(self, now):
+        """Days/years in space as of `now`, or None if launch date is unknown."""
+        if not self.launch_date: return None
+        days = (now - self.launch_date).total_seconds() / 86400
+        return days, days / 365.25
 
     def latlon(self, t):
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute, t.second + t.microsecond/1e6)
@@ -98,7 +128,7 @@ def proj(lat, lon, w, h):
 class LedFrame:            # 1: 16x16 WS2812 behind a printed map, plus OLED
     W, H, PIX = 16, 16, 34
     def __init__(s): s.land = land_grid(s.W, s.H)
-    def size(s): return (s.W*s.PIX + 40, s.H*s.PIX + 120)
+    def size(s): return (s.W*s.PIX + 40, s.H*s.PIX + 140)
     def draw(s, scr, sat, trail, now, sun, font):
         scr.fill((25, 22, 20)); ox, oy = 20, 20
         buf = [[[0,0,0] for _ in range(s.W)] for _ in range(s.H)]
@@ -126,10 +156,12 @@ class LedFrame:            # 1: 16x16 WS2812 behind a printed map, plus OLED
                 c = [min(255, int(base[i]*0.6 + buf[y][x][i])) for i in range(3)]
                 pygame.draw.rect(scr, c, r, border_radius=6)
         # OLED
-        o = pygame.Rect(ox, oy+s.H*s.PIX+12, s.W*s.PIX, 70)
+        o = pygame.Rect(ox, oy+s.H*s.PIX+12, s.W*s.PIX, 90)
         pygame.draw.rect(scr, (0,0,0), o); pygame.draw.rect(scr, (90,90,90), o, 2)
+        age = sat.age(now)
+        age_line = f"IN SPACE {age[0]:.0f}d ({age[1]:.1f}y)" if age else "IN SPACE unknown"
         for i, t in enumerate([sat.name[:16], f"APO {sat.apogee:5.0f} km  PERI {sat.perigee:5.0f} km",
-                               now.strftime("%H:%M:%S UTC")]):
+                               now.strftime("%H:%M:%S UTC"), age_line]):
             scr.blit(font.render(t, True, (120, 200, 255)), (o.x+8, o.y+6+i*20))
 
 class Hub75:               # 2: 64x32 RGB matrix, bottom 8 rows text
@@ -206,6 +238,8 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
         surf.blit(big.render(sat.name, True, (0,0,0)), (20, mh+12))
         info = (f"Apogee {sat.apogee:.0f} km    Perigee {sat.perigee:.0f} km    "
                 f"Incl {sat.incl:.1f}°    Period {sat.period:.1f} min")
+        age = sat.age(now)
+        if age: info += f"    In space {age[0]:.0f} d ({age[1]:.1f} yr)"
         surf.blit(small.render(info, True, (0,0,0)), (20, mh+50))
         surf.blit(small.render(now.strftime("Updated %Y-%m-%d %H:%M UTC"), True, (90,90,90)), (mw-330, mh+12))
         return surf
@@ -216,8 +250,10 @@ def main():
     norad = args[0] if args else "100614"
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
-    sat = Sat(fetch_omm(norad))
+    sat = Sat(fetch_omm(norad), fetch_launch_date(norad))
     print(f"{sat.name}: apogee {sat.apogee:.0f} km, perigee {sat.perigee:.0f} km, period {sat.period:.1f} min")
+    age = sat.age(datetime.now(timezone.utc))
+    if age: print(f"  in space {age[0]:.0f} days ({age[1]:.1f} years)")
 
     pygame.init(); pygame.display.set_caption("Satellite display demo")
     displays = {1: LedFrame(), 2: Hub75(), 3: EPaper()}; mode = 1
