@@ -92,6 +92,22 @@ def fetch_name(norad, api_key):
 
 # ---------- orbit maths ----------
 MU, RE = 398600.4418, 6371.0
+
+def classify_orbit(apogee, perigee, incl, period):
+    """Rough, human-friendly orbit label from apogee/perigee/inclination/period.
+    Not a rigorous classification, just enough to be a recognizable word on
+    the display (LEO/SSO/MEO/GEO/Molniya/HEO/GTO)."""
+    alt, spread = (apogee+perigee)/2, apogee-perigee
+    if spread > 15000 and 55 <= incl <= 65:      # near the 63.4 deg "critical
+        return "Molniya"                          # inclination" that avoids apsidal drift
+    if abs(period-1436) < 60 and spread < 500 and incl < 15:
+        return "GEO"
+    if spread > 15000:
+        return "GTO" if perigee < 5000 else "HEO"
+    if alt < 2000:
+        return "SSO" if 95 <= incl <= 105 else "LEO"
+    return "MEO" if alt < 35000 else "HEO"
+
 class Sat:
     def __init__(self, fields, launch_date=None):
         self.name = fields["OBJECT_NAME"].strip()
@@ -103,6 +119,7 @@ class Sat:
         a = (MU / n**2) ** (1/3)
         self.apogee, self.perigee = a*(1+e)-RE, a*(1-e)-RE
         self.incl, self.period = float(fields["INCLINATION"]), 2*math.pi/n/60
+        self.orbit_class = classify_orbit(self.apogee, self.perigee, self.incl, self.period)
 
     def age(self, now):
         """Days/years in space as of `now`, or None if launch date is unknown."""
@@ -182,7 +199,8 @@ class LedFrame:            # 1: 16x16 WS2812 behind a printed map, plus OLED
         pygame.draw.rect(scr, (0,0,0), o); pygame.draw.rect(scr, (90,90,90), o, 2)
         age = sat.age(now)
         age_line = f"IN SPACE {age[0]:.0f}d ({age[1]:.1f}y)" if age else "IN SPACE unknown"
-        for i, t in enumerate([sat.name[:16], f"APO {sat.apogee:5.0f} km  PERI {sat.perigee:5.0f} km",
+        for i, t in enumerate([f"{sat.name[:12]:<12} {sat.orbit_class}",
+                               f"APO {sat.apogee:5.0f} km  PERI {sat.perigee:5.0f} km",
                                now.strftime("%H:%M:%S UTC"), age_line]):
             scr.blit(font.render(t, True, (120, 200, 255)), (o.x+8, o.y+6+i*20))
 
@@ -265,7 +283,7 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
             pygame.draw.circle(surf, (0,0,0), (x,y), 9); pygame.draw.circle(surf, (250,250,250), (x,y), 5)
         pygame.draw.line(surf, (0,0,0), (0, mh), (mw, mh), 2)
         big = pygame.font.SysFont("dejavuserif", 30, bold=True); small = pygame.font.SysFont("dejavusans", 20)
-        surf.blit(big.render(sat.name, True, (0,0,0)), (20, mh+12))
+        surf.blit(big.render(f"{sat.name}  ({sat.orbit_class})", True, (0,0,0)), (20, mh+12))
         info = (f"Apogee {sat.apogee:.0f} km    Perigee {sat.perigee:.0f} km    "
                 f"Incl {sat.incl:.1f}°    Period {sat.period:.1f} min")
         age = sat.age(now)
