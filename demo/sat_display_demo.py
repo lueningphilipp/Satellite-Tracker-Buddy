@@ -15,34 +15,48 @@ import sys, io, math, base64, time, urllib.request
 from datetime import datetime, timedelta, timezone
 import pygame
 from sgp4.api import Satrec, jday
+import sgp4.omm as omm
 
 # ---------- world land mask, 360x180 equirectangular, embedded PNG ----------
 MASK_B64 = "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"
-FALLBACK_TLE = (  # ISS, used if CelesTrak is unreachable (epoch will be stale)
-    "1 25544U 98067A   26250.50000000  .00012000  00000+0  21000-3 0  9990",
-    "2 25544  51.6400 120.0000 0005000  90.0000 270.0000 15.50000000410000")
+FALLBACK_OMM = {  # ISS, used if CelesTrak is unreachable (epoch will be stale)
+    "OBJECT_NAME": "ISS (fallback)", "OBJECT_ID": "1998-067A",
+    "EPOCH": "2026-09-10T11:11:07.892448", "MEAN_MOTION": "15.49068969",
+    "ECCENTRICITY": ".00049899", "INCLINATION": "51.6301",
+    "RA_OF_ASC_NODE": "238.0248", "ARG_OF_PERICENTER": "125.6916",
+    "MEAN_ANOMALY": "234.4537", "EPHEMERIS_TYPE": "0", "CLASSIFICATION_TYPE": "U",
+    "NORAD_CAT_ID": "25544", "ELEMENT_SET_NO": "999", "REV_AT_EPOCH": "58497",
+    "BSTAR": ".98181333E-4", "MEAN_MOTION_DOT": ".4975E-4", "MEAN_MOTION_DDOT": "0",
+}
 
-def fetch_tle(norad):
-    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad}&FORMAT=tle"
+def fetch_omm(norad):
+    """Fetch orbital elements as OMM/CSV rather than legacy TLE text: catalog
+    numbers >=100000 (newly launched objects) don't fit the TLE format's
+    fixed 5-digit satellite-number field, so CelesTrak 404s FORMAT=tle/3le
+    for them while CSV/JSON still work fine."""
+    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad}&FORMAT=csv"
     try:
         txt = urllib.request.urlopen(url, timeout=10).read().decode()
-        lines = [l.strip() for l in txt.splitlines() if l.strip()]
-        return lines[0], lines[1], lines[2]
+        rows = list(omm.parse_csv(io.StringIO(txt)))
+        if not rows:
+            raise ValueError("No GP data found")
+        return rows[0]
     except Exception as e:
-        print("TLE fetch failed, using fallback:", e)
-        return "ISS (fallback)", *FALLBACK_TLE
+        print("Orbital element fetch failed, using fallback:", e)
+        return dict(FALLBACK_OMM)
 
 # ---------- orbit maths ----------
 MU, RE = 398600.4418, 6371.0
 class Sat:
-    def __init__(self, name, l1, l2):
-        self.name = name
-        self.rec = Satrec.twoline2rv(l1, l2)
-        n = float(l2[52:63]) * 2*math.pi/86400          # rad/s
-        e = float("0." + l2[26:33])
+    def __init__(self, fields):
+        self.name = fields["OBJECT_NAME"].strip()
+        self.rec = Satrec()
+        omm.initialize(self.rec, fields)
+        n = float(fields["MEAN_MOTION"]) * 2*math.pi/86400   # rad/s
+        e = float(fields["ECCENTRICITY"])
         a = (MU / n**2) ** (1/3)
         self.apogee, self.perigee = a*(1+e)-RE, a*(1-e)-RE
-        self.incl, self.period = float(l2[8:16]), 2*math.pi/n/60
+        self.incl, self.period = float(fields["INCLINATION"]), 2*math.pi/n/60
 
     def latlon(self, t):
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute, t.second + t.microsecond/1e6)
@@ -202,7 +216,7 @@ def main():
     norad = args[0] if args else "100614"
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
-    sat = Sat(*fetch_tle(norad))
+    sat = Sat(fetch_omm(norad))
     print(f"{sat.name}: apogee {sat.apogee:.0f} km, perigee {sat.perigee:.0f} km, period {sat.period:.1f} min")
 
     pygame.init(); pygame.display.set_caption("Satellite display demo")
