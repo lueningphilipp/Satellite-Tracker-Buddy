@@ -23,9 +23,16 @@ public:
     double apogeeKm() const { return apogeeKm_; }
     double perigeeKm() const { return perigeeKm_; }
     double periodMin() const { return periodMin_; }
+    const char* orbitClass() const { return orbitClass_; }
 
 private:
     double apogeeKm_ = 0, perigeeKm_ = 0, periodMin_ = 0;
+    const char* orbitClass_ = "?";
 };
+
+// Rough, human-friendly orbit label - ported as-is from classify_orbit() in
+// demo/sat_display_demo.py per CLAUDE.md's Architecture note (a heuristic,
+// not authoritative; don't re-derive the thresholds).
+const char* classifyOrbit(double apogeeKm, double perigeeKm, double inclDeg, double periodMin);
 
 extern Sgp4Track satTrack;

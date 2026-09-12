@@ -62,7 +62,18 @@ bool Sgp4Track::init(const OrbitalElements& el) {
     apogeeKm_  = a * (1.0 + el.eccentricity) - RE;
     perigeeKm_ = a * (1.0 - el.eccentricity) - RE;
     periodMin_ = 1440.0 / el.meanMotionRevPerDay;
+    orbitClass_ = classifyOrbit(apogeeKm_, perigeeKm_, el.inclinationDeg, periodMin_);
     return true;
+}
+
+const char* classifyOrbit(double apogeeKm, double perigeeKm, double inclDeg, double periodMin) {
+    double alt = (apogeeKm + perigeeKm) / 2.0;
+    double spread = apogeeKm - perigeeKm;
+    if (spread > 15000 && inclDeg >= 55 && inclDeg <= 65) return "Molniya";
+    if (fabs(periodMin - 1436) < 60 && spread < 500 && inclDeg < 15) return "GEO";
+    if (spread > 15000) return perigeeKm < 5000 ? "GTO" : "HEO";
+    if (alt < 2000) return (inclDeg >= 95 && inclDeg <= 105) ? "SSO" : "LEO";
+    return alt < 35000 ? "MEO" : "HEO";
 }
 
 SatPosition Sgp4Track::positionAt(time_t unixTime) {

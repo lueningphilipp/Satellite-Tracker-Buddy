@@ -2,6 +2,8 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <stdio.h>   // sscanf
+#include <string.h>  // strlen
+#include <math.h>    // floor
 
 // CelesTrak's CSV column order (verified against a live response - see the
 // curl output in this project's chat history / CLAUDE.md's Architecture
@@ -84,6 +86,48 @@ bool fetchElements(const String& noradId, OrbitalElements& out) {
     if (parsed.name.length() == 0 || parsed.meanMotionRevPerDay <= 0) return false;
 
     out = parsed;
+    return true;
+}
+
+// Days-since-epoch date -> unix time, without relying on timegm() (not
+// available on this ESP32 toolchain's libc). Same Vallado Julian-date
+// formula already verified in core/sgp4_track.cpp's jday(), at midnight;
+// JD 2440587.5 = 1970-01-01 00:00 UT is the standard JD/unix-time offset.
+static time_t unixFromYMD(int year, int mon, int day) {
+    double jd = 367.0 * year -
+                floor((7 * (year + floor((mon + 9) / 12.0))) * 0.25) +
+                floor(275 * mon / 9.0) + day + 1721013.5;
+    return (time_t)((jd - 2440587.5) * 86400.0 + 0.5);
+}
+
+bool fetchLaunchDate(const String& noradId, time_t& out) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    String url = "https://celestrak.org/satcat/records.php?CATNR=" + noradId + "&FORMAT=json";
+    if (!http.begin(client, url)) return false;
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("launch date fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
+        http.end();
+        return false;
+    }
+    String body = http.getString();
+    http.end();
+
+    // Plain string search rather than pulling in ArduinoJson for one fixed-
+    // format field - matches CSV parsing's style elsewhere in this file.
+    const char* key = "\"LAUNCH_DATE\":\"";
+    int idx = body.indexOf(key);
+    if (idx < 0) return false;
+    idx += strlen(key);
+    String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
+    if (dateStr.length() != 10) return false;
+
+    int y, mo, d;
+    if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) return false;
+    out = unixFromYMD(y, mo, d);   // UTC, not local time - all times UTC internally per CLAUDE.md
     return true;
 }
 

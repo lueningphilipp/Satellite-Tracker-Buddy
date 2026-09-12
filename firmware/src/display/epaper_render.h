@@ -1,0 +1,19 @@
+#pragma once
+#include <Arduino.h>
+#include "../core/sgp4_track.h"
+#include "../core/elements.h"
+#include "trail_buffer.h"
+
+// One-time GxEPD2 + SPI init. Call once from setup().
+void epaperInit();
+
+// Full-refresh render: map + land + night shading + past(dashed)/future(solid)
+// track + "you are here" reticle + name/orbit-class title + apogee/perigee/
+// incl/period/time-in-space info row + refresh-time clock/online status row.
+// Mirrors demo/sat_display_demo.py's EPaper.render()/draw(), see CLAUDE.md's
+// "Keep the demo and firmware renderers visually identical" convention.
+// launchDate/haveLaunchDate: time-in-space is hidden if haveLaunchDate is
+// false (launch-date fetch failed), matching the demo's `if age:` pattern.
+void epaperRender(Sgp4Track& track, const OrbitalElements& el,
+                   const TrailBuffer& trail, time_t now, bool online,
+                   time_t launchDate, bool haveLaunchDate);

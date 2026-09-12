@@ -1,3 +1,4 @@
 # Local secrets - never commit API keys. Mirrors what the firmware will
 # eventually store in NVS (set once via the WiFi config page).
 demo/secrets.local.json
+firmware/.pio/build

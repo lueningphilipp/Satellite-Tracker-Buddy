@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <time.h>
 
 // Orbital elements as fetched from CelesTrak's OMM/CSV endpoint - the fields
 // sgp4_track.cpp needs to call the SGP4 library's low-level init directly,
@@ -29,3 +30,10 @@ bool fetchElements(const String& noradId, OrbitalElements& out);
 // used when fetchElements() fails, so the device always has *something* to
 // propagate rather than getting stuck with no satrec at all.
 OrbitalElements fallbackElements();
+
+// Launch date (for time-in-space) isn't part of the OMM/CSV element set, so
+// it's a separate CelesTrak call, same as the demo's fetch_launch_date():
+// https://celestrak.org/satcat/records.php?CATNR=<norad>&FORMAT=json,
+// field LAUNCH_DATE. Best-effort - returns false (out untouched) on any
+// failure, caller just hides the time-in-space field rather than blocking.
+bool fetchLaunchDate(const String& noradId, time_t& out);

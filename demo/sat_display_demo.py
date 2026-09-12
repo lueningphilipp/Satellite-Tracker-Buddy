@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Satellite display demo - simulates the three proposed builds on your PC.
+Satellite display demo - PC simulator for the e-paper build (see CLAUDE.md;
+the LED-matrix and HUB75 modes that used to live here were dropped along with
+that decision - this is now just the spec for firmware's e-paper renderer).
 
     pip install pygame sgp4
 
-    python sat_display_demo.py            # ISS, LED-matrix mode
+    python sat_display_demo.py            # default NORAD id
     python sat_display_demo.py 25544      # any NORAD id
     python sat_display_demo.py 25544 --speed 60   # 60x time-lapse
 
-Keys:  1 = 16x16 LED map frame   2 = 64x32 HUB75 panel   3 = 7.5" e-paper
-       +/- = time speed          space = real time        q = quit
+Keys:  +/- = time speed   space = real time   q = quit
 """
 import sys, os, io, json, math, base64, time, urllib.request
 from datetime import datetime, timedelta, timezone
@@ -166,83 +167,8 @@ def land_grid(w, h):
 def proj(lat, lon, w, h):
     return (lon+180)/360*w, (90-lat)/180*h
 
-# ---------- the three simulated displays ----------
-class LedFrame:            # 1: 16x16 WS2812 behind a printed map, plus OLED
-    W, H, PIX = 16, 16, 34
-    def __init__(s): s.land = land_grid(s.W, s.H)
-    def size(s): return (s.W*s.PIX + 40, s.H*s.PIX + 140)
-    def draw(s, scr, sat, trail, now, sun, font):
-        scr.fill((25, 22, 20)); ox, oy = 20, 20
-        buf = [[[0,0,0] for _ in range(s.W)] for _ in range(s.H)]
-        def add(x, y, c, k, blend=False):
-            x, y = int(x) % s.W, int(y)
-            if 0 <= y < s.H:
-                for i in range(3):
-                    v = c[i]*k
-                    buf[y][x][i] = min(255, buf[y][x][i] + v) if blend else max(buf[y][x][i], v)
-        n = len(trail)
-        for i, (la, lo) in enumerate(trail):
-            px, py = proj(la, lo, s.W, s.H); add(px, py, (60, 120, 255), (i+1)/n*0.8)
-        if trail:
-            la, lo = trail[-1]; px, py = proj(la, lo, s.W, s.H)
-            fx, fy = px - int(px), py - int(py)          # sub-pixel blend over 2x2
-            for dx in (0,1):
-                for dy in (0,1):
-                    w = (fx if dx else 1-fx)*(fy if dy else 1-fy)
-                    add(int(px)+dx, int(py)+dy, (255,255,255), w, blend=True)
-        for y in range(s.H):
-            for x in range(s.W):
-                r = pygame.Rect(ox+x*s.PIX, oy+y*s.PIX, s.PIX-2, s.PIX-2)
-                # printed map layer: land dim warm, ocean shows LED glow
-                base = (70, 62, 50) if s.land[y][x] else (30, 40, 55)
-                c = [min(255, int(base[i]*0.6 + buf[y][x][i])) for i in range(3)]
-                pygame.draw.rect(scr, c, r, border_radius=6)
-        # OLED
-        o = pygame.Rect(ox, oy+s.H*s.PIX+12, s.W*s.PIX, 90)
-        pygame.draw.rect(scr, (0,0,0), o); pygame.draw.rect(scr, (90,90,90), o, 2)
-        age = sat.age(now)
-        age_line = f"IN SPACE {age[0]:.0f}d ({age[1]:.1f}y)" if age else "IN SPACE unknown"
-        for i, t in enumerate([f"{sat.name[:12]:<12} {sat.orbit_class}",
-                               f"APO {sat.apogee:5.0f} km  PERI {sat.perigee:5.0f} km",
-                               now.strftime("%H:%M:%S UTC"), age_line]):
-            scr.blit(font.render(t, True, (120, 200, 255)), (o.x+8, o.y+6+i*20))
-        # minimalistic online/offline dot, next to the clock row
-        cy = o.y+6+2*20+8
-        pygame.draw.circle(scr, (60,200,110) if sat.online else (200,80,70), (o.right-16, cy), 5,
-                            0 if sat.online else 2)
-
-class Hub75:               # 2: 64x32 RGB matrix, bottom 8 rows text
-    W, H, PIX = 64, 32, 12
-    def __init__(s): s.land = land_grid(s.W, s.H-8)
-    def size(s): return (s.W*s.PIX + 20, s.H*s.PIX + 20)
-    def draw(s, scr, sat, trail, now, sun, font):
-        scr.fill((15,15,15)); ox = oy = 10
-        buf = [[(0,0,0) for _ in range(s.W)] for _ in range(s.H)]
-        for y in range(s.H-8):
-            for x in range(s.W):
-                lat, lon = 90-(y+.5)/(s.H-8)*180, (x+.5)/s.W*360-180
-                day = is_day(lat, lon, sun)
-                if s.land[y][x]: buf[y][x] = (0,90,30) if day else (0,25,8)
-                else:            buf[y][x] = (0,20,60) if day else (0,4,14)
-        n = len(trail)
-        for i,(la,lo) in enumerate(trail):
-            px, py = proj(la, lo, s.W, s.H-8); k = (i+1)/n
-            buf[int(py)][int(px)%s.W] = (int(255*k), int(120*k), 0)
-        if trail:
-            la, lo = trail[-1]; px, py = proj(la, lo, s.W, s.H-8)
-            buf[int(py)][int(px)%s.W] = (255,255,255)
-        # text rows as bitmap font: render small then downscale to pixel grid
-        txt = pygame.Surface((s.W, 8)); txt.fill((0,0,0))
-        f = pygame.font.SysFont("dejavusansmono", 8)
-        txt.blit(f.render(f"A{sat.apogee:4.0f} P{sat.perigee:4.0f}", False, (255,200,0)), (0,0))
-        for y in range(8):
-            for x in range(s.W):
-                if txt.get_at((x,y))[0] > 80: buf[s.H-8+y][x] = (255,200,0)
-        for y in range(s.H):
-            for x in range(s.W):
-                pygame.draw.circle(scr, buf[y][x], (ox+x*s.PIX+s.PIX//2, oy+y*s.PIX+s.PIX//2), s.PIX//2-1)
-
-class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
+# ---------- the e-paper display ----------
+class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
     W, H, MH = 800, 480, 400   # MH = map height within the cached image
     def __init__(s):
         s.land = land_grid(360, 180); s.last = None; s.cache = None
@@ -253,25 +179,32 @@ class EPaper:              # 3: 7.5" 800x480 e-ink, full refresh every 5 min
             s.cache = s.render(sat, now, sun); s.last = now
         scr.blit(s.cache, (30, 30))
         pygame.draw.rect(scr, (60,60,60), (30,30,s.W,s.H), 3)
-        # Live clock + online dot: drawn straight to scr, *not* into the
-        # cached e-ink surface above, so they tick every frame even though
-        # the panel content itself only redraws every 5 min (that's the real
-        # e-paper constraint, not a bug). Placed inside the frame, in the
-        # same top-right slot the old frozen timestamp used to sit in. Pure
-        # black ink only (filled = online, outline = offline) - a real e-ink
-        # panel has no green/red to spend on this, on hardware this dot would
-        # be driven by a small status LED near the button instead.
+        # Online/offline indicator + live clock: drawn straight to scr, *not*
+        # into the cached e-ink surface above, so the clock ticks every frame
+        # even though the panel content itself only redraws every 5 min
+        # (that's the real e-paper constraint, not a bug). Two separate rows,
+        # both right-aligned inside the frame - mirrors firmware's
+        # src/display/epaper_render.cpp layout (kept in sync per CLAUDE.md's
+        # "keep the demo and firmware renderers visually identical"
+        # convention; firmware's own status text reads "Last refreshed"
+        # there instead of "LIVE", since a real e-paper refresh is slow and
+        # visibly flashes - it can't actually redraw every frame like this).
+        # Pure black ink only (filled = online, outline = offline) - a real
+        # e-ink panel has no green/red to spend on this; on hardware this dot
+        # would be driven by a small status LED near the button instead.
+        x1 = 30 + s.W - 20                         # right edge inside the frame
+
         label = "ONLINE" if sat.online else "OFFLINE"
         lw, lh = font.size(label)
-        r, gap = 6, 10
-        x1 = 30 + s.W - 20                         # right edge inside the frame
+        r, gap = 4, 8
         x0 = x1 - (2*r + gap + lw)
         ty = 30 + s.MH + 12
         cx, cy = x0+r, ty+lh//2
         pygame.draw.circle(scr, (0,0,0), (cx, cy), r, 0 if sat.online else 2)
         scr.blit(font.render(label, True, (0,0,0)), (x0+2*r+gap, ty))
+
         clock = font.render(now.strftime("LIVE %H:%M:%S UTC"), True, (0,0,0))
-        scr.blit(clock, (x1-lw-2*r-gap-10-clock.get_width(), ty))
+        scr.blit(clock, (x1-clock.get_width(), ty+28))
     def render(s, sat, now, sun):
         surf = pygame.Surface((s.W, s.H)); surf.fill((250, 250, 250))
         mw, mh = s.W, s.MH; sx, sy = mw/360, mh/180
@@ -333,8 +266,8 @@ def main():
     if age: print(f"  in space {age[0]:.0f} days ({age[1]:.1f} years)")
 
     pygame.init(); pygame.display.set_caption("Satellite display demo")
-    displays = {1: LedFrame(), 2: Hub75(), 3: EPaper()}; mode = 1
-    scr = pygame.display.set_mode(displays[mode].size())
+    ep = EPaper()
+    scr = pygame.display.set_mode(ep.size())
     font = pygame.font.SysFont("dejavusansmono", 16)
     clock = pygame.time.Clock()
     simt = datetime.now(timezone.utc); trail = []; last_sample = None
@@ -344,8 +277,6 @@ def main():
             if e.type == pygame.QUIT: return
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_q: return
-                if e.unicode in "123":
-                    mode = int(e.unicode); scr = pygame.display.set_mode(displays[mode].size())
                 if e.unicode in "+=": speed *= 2
                 if e.unicode == "-": speed = max(1, speed/2)
                 if e.key == pygame.K_SPACE: speed = 1; simt = datetime.now(timezone.utc)
@@ -354,8 +285,8 @@ def main():
             p = sat.latlon(simt)
             if p: trail.append((p[0], p[1])); trail = trail[-150:]
             last_sample = simt
-        displays[mode].draw(scr, sat, trail, simt, subsolar(simt), font)
-        pygame.display.set_caption(f"Satellite display demo  -  mode {mode}  -  {speed:g}x")
+        ep.draw(scr, sat, trail, simt, subsolar(simt), font)
+        pygame.display.set_caption(f"Satellite display demo  -  {speed:g}x")
         pygame.display.flip(); clock.tick(30)
 
 if __name__ == "__main__":
