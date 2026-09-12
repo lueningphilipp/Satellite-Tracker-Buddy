@@ -47,6 +47,15 @@ bool Sgp4Track::init(const OrbitalElements& el) {
                         sgp4lib.satrec);
     if (!ok) return false;
 
+    // sgp4init() never touches jdsatepoch (only the TLE-text parsing path
+    // we bypassed does that) - but Sgp4::findsat() computes tsince as
+    // (jdNow - satrec.jdsatepoch)*1440, so leaving it at 0 makes tsince a
+    // huge bogus value and every propagation fails. Set it ourselves from
+    // the same full JD we derived `epoch` from. Found this the hard way: it
+    // compiled and initialized fine (apogee/perigee came out correct) but
+    // every findsat() call failed until this was added.
+    sgp4lib.satrec.jdsatepoch = jd;
+
     // Same formula as the demo's Sat.__init__: a = (mu/n^2)^(1/3), n in rad/s.
     double n_rad_s = el.meanMotionRevPerDay * 2.0 * PI_D / 86400.0;
     double a = pow(MU / (n_rad_s * n_rad_s), 1.0 / 3.0);

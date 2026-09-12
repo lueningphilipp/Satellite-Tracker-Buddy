@@ -80,9 +80,13 @@ void loop() {
 
     if (nowMs - lastSampleMs >= 1000) {
         lastSampleMs = nowMs;
-        SatPosition pos = satTrack.positionAt(time(nullptr));
+        time_t t = time(nullptr);
+        SatPosition pos = satTrack.positionAt(t);
         if (pos.valid) {
-            Serial.printf("lat %7.2f  lon %7.2f  alt %7.0f km\n", pos.lat, pos.lon, pos.altKm);
+            // t printed alongside so a demo comparison can use the exact
+            // instant instead of estimating from serial arrival time.
+            Serial.printf("t=%ld  lat %7.2f  lon %7.2f  alt %7.0f km\n",
+                           (long)t, pos.lat, pos.lon, pos.altKm);
         } else {
             Serial.println("propagation error");
         }
