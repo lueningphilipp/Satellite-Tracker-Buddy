@@ -1,11 +1,16 @@
 # firmware/
 
-PlatformIO project for the ESP32, e-paper build only (see CLAUDE.md). Implements
-CLAUDE.md's Next Steps **#1 and #2**: WiFi + NTP + NVS config + orbital-element
-fetch + serial-printed lat/lon, plus the captive portal and config web page.
-**#1 and #2 are now verified working on real hardware** (see Status below).
-Next Steps **#3 (display renderer)** is not here yet - no panel hardware to
-test the renderer against.
+PlatformIO project for the ESP32, e-paper build only (see CLAUDE.md).
+**Next Steps #1-#3 are all wired up and running on real hardware**: WiFi
+captive portal, NVS config, OMM/CSV element fetch, SGP4, config web page, and
+the e-paper renderer (map, land, night shading, track, reticle, name/orbit-
+class, apogee/perigee/incl/period, time-in-space, refresh-time/online
+status). See CLAUDE.md's TODO for the detailed, chronological log of the
+renderer's layout iterations (several rounds - rotation, text overflow,
+column layout, spacing) and for a known issue at the end of the latest
+session: CelesTrak's `gp.php` endpoint returning 403 (not a code bug - check
+CLAUDE.md's TODO for how to verify whether it's cleared before assuming
+otherwise).
 
 ## Status: bring-up done, core loop verified working on real hardware
 

@@ -143,14 +143,20 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         display.print(track.orbitClass());
         display.print(")");
 
-        // Online/offline indicator: shares the title's row, right-aligned,
-        // directly under the map border. Small built-in GFX font (not the
-        // 9pt custom one) and a small dot.
+        // Online/offline indicator + "Last refreshed": stacked together in
+        // the top-right corner, sharing the title's row band (small built-in
+        // GFX font, not the 9pt custom one) - frees up the rest of the text
+        // area for the orbit-numbers grid below with more breathing room
+        // under the title. "Last refreshed" rather than "LIVE" (unlike the
+        // pygame demo) because a real e-paper refresh is a slow (~2.6s),
+        // visibly-flashing full-panel update - it can only ever be as fresh
+        // as the last refresh, never actually live.
         display.setFont(nullptr);
         display.setTextSize(1);
-        const char* label = online ? "ONLINE" : "OFFLINE";
         int16_t bx, by;
         uint16_t bw, bh;
+
+        const char* label = online ? "ONLINE" : "OFFLINE";
         display.getTextBounds(label, 0, 0, &bx, &by, &bw, &bh);
         int r = 4, gap = 8;
         int indicatorTy = MH + 8;   // top of text (built-in font convention)
@@ -161,51 +167,65 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         display.setCursor(x0 + 2 * r + gap, indicatorTy);
         display.print(label);
 
-        // Orbit numbers as a 3-column grid (apogee/perigee, incl/period,
-        // in-space-days/years each stacked two rows) instead of one long
-        // line - the single-line version wrapped/overflowed the 800px
-        // width. Left-aligned per column (labels read naturally left-to-
-        // right, flush with each column's left edge) - right-aligning the
-        // combined "Label Value" strings made the labels themselves start
-        // at uneven x positions, since "Apogee"/"Perigee" etc. differ in
-        // length. Column 1 starts flush with the satellite name above it.
-        display.setFont(&FreeSans9pt7b);
-        const int col1X = 20, col2X = 220, col3X = 420;
-        const int row1Y = MH + 44, row2Y = MH + 62;
-
-        display.setCursor(col1X, row1Y);
-        display.printf("Apogee %.0f km", track.apogeeKm());
-        display.setCursor(col1X, row2Y);
-        display.printf("Perigee %.0f km", track.perigeeKm());
-
-        display.setCursor(col2X, row1Y);
-        display.printf("Incl %.1f deg", el.inclinationDeg);
-        display.setCursor(col2X, row2Y);
-        display.printf("Period %.1f min", track.periodMin());
-
-        // "Last refreshed" rather than "LIVE" (unlike the pygame demo)
-        // because a real e-paper refresh is a slow (~2.6s), visibly-flashing
-        // full-panel update - it can only ever be as fresh as the last
-        // refresh, never actually live.
-        if (haveLaunchDate) {
-            double days = difftime(now, launchDate) / 86400.0;
-            display.setCursor(col3X, row1Y);
-            display.printf("In space %.0f d", days);
-            display.setCursor(col3X, row2Y);
-            display.printf("(%.1f yr)", days / 365.25);
-        }
-
-        display.setFont(nullptr);
-        display.setTextSize(1);
         char clockStr[32];
         struct tm tmv;
         gmtime_r(&now, &tmv);
         snprintf(clockStr, sizeof(clockStr), "Last refreshed %02d:%02d:%02d UTC",
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
         display.getTextBounds(clockStr, 0, 0, &bx, &by, &bw, &bh);
-        int clockTy = MH + 70;   // nudged down to clear row2Y (62) now that it moved
+        int clockTy = MH + 18;
         display.setCursor((W - 20) - (int)bw, clockTy);
         display.print(clockStr);
+
+        // Orbit numbers as a 3-column table (apogee/perigee, incl/period,
+        // in-space-days/years each stacked two rows): label left-aligned at
+        // the column's start, value right-aligned to the column's end - so
+        // labels read naturally left-to-right while numbers still line up
+        // on the right, like a spreadsheet. Column 1 starts flush with the
+        // satellite name above it. Pushed further down from the title than
+        // before, for more visual separation.
+        display.setFont(&FreeSans9pt7b);
+        auto printLabelValue = [&](int labelX, int valueRightEdge, int y,
+                                    const char* lbl, const char* val) {
+            display.setCursor(labelX, y);
+            display.print(lbl);
+            int16_t tbx, tby; uint16_t tbw, tbh;
+            display.getTextBounds(val, 0, 0, &tbx, &tby, &tbw, &tbh);
+            display.setCursor(valueRightEdge - (int)tbw, y);
+            display.print(val);
+        };
+        auto printRightAligned = [&](int rightEdge, int y, const char* text) {
+            int16_t tbx, tby; uint16_t tbw, tbh;
+            display.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
+            display.setCursor(rightEdge - (int)tbw, y);
+            display.print(text);
+        };
+        // Narrower columns than before (was 180px wide, leaving a big gap
+        // between a short label like "Apogee" and its right-aligned value) -
+        // tightened by about one tab-width per column.
+        const int col1X = 20, col1Right = 150;
+        const int col2X = 170, col2Right = 300;
+        const int col3X = 320, col3Right = 450;
+        const int row1Y = MH + 52, row2Y = MH + 72;
+
+        char valBuf[24];
+        snprintf(valBuf, sizeof(valBuf), "%.0f km", track.apogeeKm());
+        printLabelValue(col1X, col1Right, row1Y, "Apogee", valBuf);
+        snprintf(valBuf, sizeof(valBuf), "%.0f km", track.perigeeKm());
+        printLabelValue(col1X, col1Right, row2Y, "Perigee", valBuf);
+
+        snprintf(valBuf, sizeof(valBuf), "%.1f deg", el.inclinationDeg);
+        printLabelValue(col2X, col2Right, row1Y, "Incl", valBuf);
+        snprintf(valBuf, sizeof(valBuf), "%.1f min", track.periodMin());
+        printLabelValue(col2X, col2Right, row2Y, "Period", valBuf);
+
+        if (haveLaunchDate) {
+            double days = difftime(now, launchDate) / 86400.0;
+            snprintf(valBuf, sizeof(valBuf), "%.0f d", days);
+            printLabelValue(col3X, col3Right, row1Y, "In space", valBuf);
+            snprintf(valBuf, sizeof(valBuf), "(%.1f yr)", days / 365.25);
+            printRightAligned(col3Right, row2Y, valBuf);   // continuation, no label
+        }
     } while (display.nextPage());
     display.hibernate();
 }
