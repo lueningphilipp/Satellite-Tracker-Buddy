@@ -112,9 +112,20 @@ static void drawReticle(int x, int y) {
     display.fillCircle(x, y, 5, GxEPD_WHITE);
 }
 
+// Easter egg for OBJECT_NAME == "SPECTRUM" (Isar Aerospace's Spectrum
+// rocket, whose second stage flies a single Aquila engine) - mark it with a
+// tiny rocket silhouette (nose cone + body + one engine nozzle) instead of
+// the generic reticle. Ported as-is from the demo's draw_rocket_icon().
+static void drawRocketIcon(int x, int y) {
+    display.fillCircle(x, y, 16, GxEPD_WHITE);
+    display.fillRect(x - 4, y - 6, 8, 12, GxEPD_BLACK);                          // body
+    display.fillTriangle(x - 4, y - 6, x + 4, y - 6, x, y - 13, GxEPD_BLACK);     // nose cone
+    display.fillTriangle(x - 3, y + 6, x + 3, y + 6, x, y + 12, GxEPD_BLACK);     // single engine nozzle
+}
+
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate) {
+                   time_t launchDate, bool haveLaunchDate, bool wifiConnected) {
     double sunDec, sunLon;
     subsolar(now, sunDec, sunLon);
 
@@ -130,7 +141,13 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         if (here.valid) {
             int x, y;
             proj(here.lat, here.lon, W, MH, x, y);
-            drawReticle(x, y);
+            String nameUpper = el.name;
+            nameUpper.toUpperCase();
+            if (nameUpper == "SPECTRUM") {
+                drawRocketIcon(x, y);
+            } else {
+                drawReticle(x, y);
+            }
         }
         display.drawFastHLine(0, MH, W, GxEPD_BLACK);
         display.drawFastHLine(0, MH + 1, W, GxEPD_BLACK);
@@ -173,9 +190,26 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         snprintf(clockStr, sizeof(clockStr), "Last refreshed %02d:%02d:%02d UTC",
                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
         display.getTextBounds(clockStr, 0, 0, &bx, &by, &bw, &bh);
-        int clockTy = MH + 18;
+        // MH+18 (a 10px gap under the indicator row above) read as cramped
+        // on the real panel - MH+22 gives a clearer 14px gap instead.
+        int clockTy = MH + 22;
         display.setCursor((W - 20) - (int)bw, clockTy);
         display.print(clockStr);
+
+        // WiFi-connected signal, bottom-right corner of the whole canvas -
+        // separate from the ONLINE/OFFLINE dot above (see epaperRender()'s
+        // header comment for why they can disagree). Same signal-bars
+        // shape as the demo: filled = connected, outline-only = not.
+        {
+            const int bars = 4, barW = 5, barGap = 3;
+            int baseX = W - 20, baseY = H - 10;
+            for (int i = 0; i < bars; i++) {
+                int barH = 5 + i * 4;
+                int bx2 = baseX - (bars - i) * (barW + barGap);
+                if (wifiConnected) display.fillRect(bx2, baseY - barH, barW, barH, GxEPD_BLACK);
+                else                display.drawRect(bx2, baseY - barH, barW, barH, GxEPD_BLACK);
+            }
+        }
 
         // Orbit numbers as a 3-column table (apogee/perigee, incl/period,
         // in-space-days/years each stacked two rows): label left-aligned at

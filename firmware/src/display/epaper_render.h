@@ -14,6 +14,10 @@ void epaperInit();
 // "Keep the demo and firmware renderers visually identical" convention.
 // launchDate/haveLaunchDate: time-in-space is hidden if haveLaunchDate is
 // false (launch-date fetch failed), matching the demo's `if age:` pattern.
+// wifiConnected: drives the WiFi signal-bars icon (bottom-right corner) -
+// separate from `online`, which reflects whether the last CelesTrak fetch
+// succeeded, not whether the radio is associated at all (the two can
+// disagree - e.g. WiFi fine but CelesTrak itself rate-limiting).
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate);
+                   time_t launchDate, bool haveLaunchDate, bool wifiConnected);

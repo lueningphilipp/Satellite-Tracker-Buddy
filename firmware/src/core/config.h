@@ -13,6 +13,8 @@ struct DeviceConfig {
     float siteLat = 0.0f;
     float siteLon = 0.0f;
     String n2yoApiKey;             // optional - empty means "skip name lookup"
+    String hostname = "sattracker";      // DHCP/mDNS-visible device name
+    int displayRefreshMinutes = 2;       // full e-paper refresh interval
 };
 
 class ConfigStore {

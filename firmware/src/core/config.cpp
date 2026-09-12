@@ -14,6 +14,8 @@ void ConfigStore::begin() {
     current.siteLat    = prefs.getFloat("siteLat", 0.0f);
     current.siteLon    = prefs.getFloat("siteLon", 0.0f);
     current.n2yoApiKey = prefs.getString("n2yoKey", "");
+    current.hostname   = prefs.getString("hostname", "sattracker");
+    current.displayRefreshMinutes = prefs.getInt("refreshMin", 2);
     prefs.end();
 }
 
@@ -32,5 +34,7 @@ void ConfigStore::save() {
     prefs.putFloat("siteLat", current.siteLat);
     prefs.putFloat("siteLon", current.siteLon);
     prefs.putString("n2yoKey", current.n2yoApiKey);
+    prefs.putString("hostname", current.hostname);
+    prefs.putInt("refreshMin", current.displayRefreshMinutes);
     prefs.end();
 }

@@ -167,6 +167,18 @@ def land_grid(w, h):
 def proj(lat, lon, w, h):
     return (lon+180)/360*w, (90-lat)/180*h
 
+def draw_rocket_icon(surf, x, y):
+    """Easter egg for OBJECT_NAME == "SPECTRUM" (Isar Aerospace's Spectrum
+    rocket, whose second stage flies a single Aquila engine) - mark it with
+    a tiny rocket silhouette (nose cone + body + one engine nozzle) instead
+    of the generic reticle. Same halo treatment as the reticle so it stays
+    legible over map/track ink, and stays within the reticle's ~16px radius
+    footprint so the two are interchangeable in the layout."""
+    pygame.draw.circle(surf, (250,250,250), (x, y), 16)
+    pygame.draw.rect(surf, (0,0,0), (x-4, y-6, 8, 12))                    # body
+    pygame.draw.polygon(surf, (0,0,0), [(x-4,y-6), (x+4,y-6), (x,y-13)])  # nose cone
+    pygame.draw.polygon(surf, (0,0,0), [(x-3,y+6), (x+3,y+6), (x,y+12)])  # single engine nozzle
+
 # ---------- the e-paper display ----------
 class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
     W, H, MH = 800, 480, 400   # MH = map height within the cached image
@@ -205,6 +217,22 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
 
         clock = font.render(now.strftime("LIVE %H:%M:%S UTC"), True, (0,0,0))
         scr.blit(clock, (x1-clock.get_width(), ty+28))
+
+        # WiFi-connected signal, bottom-right corner of the frame - distinct
+        # from the ONLINE/OFFLINE dot above (that one reflects whether the
+        # last CelesTrak fetch succeeded, not whether the radio is
+        # associated at all - the two can disagree, e.g. WiFi is fine but
+        # CelesTrak itself is rate-limiting). The demo has no real radio to
+        # check, so it's always drawn connected; firmware wires the same
+        # icon to WiFi.status() == WL_CONNECTED.
+        wifi_connected = True
+        bars, bw, gap = 4, 5, 3
+        base_y = 30 + s.H - 10
+        for i in range(bars):
+            bar_h = 5 + i*4
+            bx = x1 - (bars - i) * (bw + gap)
+            rect = (bx, base_y - bar_h, bw, bar_h)
+            pygame.draw.rect(scr, (0,0,0), rect, 0 if wifi_connected else 1)
     def render(s, sat, now, sun):
         surf = pygame.Surface((s.W, s.H)); surf.fill((250, 250, 250))
         mw, mh = s.W, s.MH; sx, sy = mw/360, mh/180
@@ -231,15 +259,19 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
         p = sat.latlon(now)
         if p:
             x, y = proj(p[0], p[1], mw, mh)
-            # "you are here" reticle: a quiet halo clears the map/track ink
-            # right around the point so the dot doesn't blend in, then a thin
-            # ring + crosshair ticks make it easy to spot without covering
-            # much extra area (halo is unfilled apart from a light fill).
-            pygame.draw.circle(surf, (250,250,250), (x,y), 16)
-            pygame.draw.circle(surf, (0,0,0), (x,y), 16, 2)
-            for dx, dy in ((-1,0), (1,0), (0,-1), (0,1)):
-                pygame.draw.line(surf, (0,0,0), (x+dx*11,y+dy*11), (x+dx*16,y+dy*16), 2)
-            pygame.draw.circle(surf, (0,0,0), (x,y), 9); pygame.draw.circle(surf, (250,250,250), (x,y), 5)
+            if sat.name.strip().upper() == "SPECTRUM":
+                draw_rocket_icon(surf, x, y)
+            else:
+                # "you are here" reticle: a quiet halo clears the map/track
+                # ink right around the point so the dot doesn't blend in,
+                # then a thin ring + crosshair ticks make it easy to spot
+                # without covering much extra area (halo is unfilled apart
+                # from a light fill).
+                pygame.draw.circle(surf, (250,250,250), (x,y), 16)
+                pygame.draw.circle(surf, (0,0,0), (x,y), 16, 2)
+                for dx, dy in ((-1,0), (1,0), (0,-1), (0,1)):
+                    pygame.draw.line(surf, (0,0,0), (x+dx*11,y+dy*11), (x+dx*16,y+dy*16), 2)
+                pygame.draw.circle(surf, (0,0,0), (x,y), 9); pygame.draw.circle(surf, (250,250,250), (x,y), 5)
         pygame.draw.line(surf, (0,0,0), (0, mh), (mw, mh), 2)
         big = pygame.font.SysFont("dejavuserif", 30, bold=True); small = pygame.font.SysFont("dejavusans", 20)
         surf.blit(big.render(f"{sat.name}  ({sat.orbit_class})", True, (0,0,0)), (20, mh+12))

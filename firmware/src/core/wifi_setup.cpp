@@ -25,14 +25,7 @@ static String htmlEscape(const String& s) {
     return out;
 }
 
-// Scans for nearby networks and returns them as <option> elements, strongest
-// first, deduped by SSID (a mesh router's 2.4/5GHz radios otherwise show up
-// as separate entries with the same name). Hidden networks (empty SSID)
-// can't be offered by name, so they're skipped - those users still have the
-// manual text field. Blocking (~2-6s) - fine for a one-time setup screen,
-// and the AP is already up before this runs so it doesn't delay portal
-// availability.
-static String scanNetworksAsOptions() {
+String WiFiSetup::scanNetworksHtml() {
     int n = WiFi.scanNetworks();
     int order[MAX_SCAN_RESULTS];
     int count = 0;
@@ -89,7 +82,7 @@ static String buildSetupPage() {
         "<label>Nearby networks</label>"
         "<select onchange=\"document.getElementById('ssid').value=this.value\">"
         "<option value=\"\">-- choose one, or type below --</option>");
-    page += scanNetworksAsOptions();
+    page += wifiSetup.scanNetworksHtml();
     page += F(
         "</select>"
         "<label>Network name (SSID)</label>"
@@ -105,6 +98,11 @@ bool WiFiSetup::connect(DeviceConfig& config, uint32_t timeoutMs) {
     if (config.wifiSsid.length() == 0) return false;
 
     WiFi.mode(WIFI_STA);
+    // Must be set after mode(WIFI_STA) but before begin() - the ESP32
+    // Arduino core silently ignores setHostname() calls made outside that
+    // window (e.g. it has no effect on an already-connected session, so a
+    // hostname change from the config page needs a reconnect to take hold).
+    if (config.hostname.length()) WiFi.setHostname(config.hostname.c_str());
     WiFi.begin(config.wifiSsid.c_str(), config.wifiPass.c_str());
 
     uint32_t start = millis();

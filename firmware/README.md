@@ -87,14 +87,12 @@ pio device monitor -b 115200   # serial output
 3. Saving triggers an immediate elements refetch, logged to serial along with
    apogee/perigee/period, then lat/lon once a second.
 
-## Deliberately not in this scaffold yet
+## Current status and what's not built yet
 
-- Display rendering (any mode) - `src/display/` doesn't exist yet.
-- The trail ring buffer, and period-scaled sampling for high orbits - both
-  need the display work to make sense; TODOs are left at the two spots in
-  `main.cpp` where they'll plug in.
-- n2yo name lookup, launch-date fetch, time-in-space, orbit classification -
-  all exist in the demo but weren't asked for in this pass; the config page
-  already collects and stores the n2yo key so wiring the lookup in later is a
-  small addition, not a rework.
-- The favourites-cycle button and deep sleep (need real hardware/frame first).
+This file's history above is from the original bring-up scaffold and is
+kept as-is for the record (bug fixes, verification numbers). It's since
+grown well past that point - display rendering, the trail buffer, WiFi
+change/reset, config page, etc. are all built and running. For what the
+firmware actually does today and how to use it, see the repo root's
+[README.md](../README.md); for the full chronological "what changed and
+why" log, see [CLAUDE.md](../CLAUDE.md)'s TODO section.

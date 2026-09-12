@@ -116,6 +116,11 @@ void setup() {
 
     refetchAndInit();
 
+    // Populate the config page's WiFi dropdown before the web server (and
+    // its async_tcp task) starts - see wifi_setup.h's scanNetworksHtml() for
+    // why this can't be done live inside the page's request handler.
+    wifiSetup.refreshCache();
+
     configWebServer.begin(config, refetchAndInit);
     Serial.printf("Config page: http://%s/\n", WiFi.localIP().toString().c_str());
 }
@@ -123,8 +128,9 @@ void setup() {
 static unsigned long lastSampleMs = 0;
 static unsigned long lastRenderMs = 0;
 static unsigned long lastRefetchMs = 0;
+static unsigned long lastWifiScanMs = 0;
 static const unsigned long REFETCH_INTERVAL_MS = 24UL * 3600UL * 1000UL;
-static const unsigned long RENDER_INTERVAL_MS = 2UL * 60UL * 1000UL;   // full refresh every 2 min
+static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 
 void loop() {
     unsigned long nowMs = millis();
@@ -166,16 +172,30 @@ void loop() {
         }
     }
 
-    if (nowMs - lastRenderMs >= RENDER_INTERVAL_MS || lastRenderMs == 0) {
+    // Read live from config each time (cheap) rather than caching, so a
+    // refresh-rate change from the config page takes effect on the very
+    // next check - no restart needed, unlike WiFi/hostname changes.
+    unsigned long renderIntervalMs = (unsigned long)config.current.displayRefreshMinutes * 60UL * 1000UL;
+    if (nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
         lastRenderMs = nowMs;
         Serial.println("Rendering e-paper...");
         epaperRender(satTrack, lastElements, trail, time(nullptr), online,
-                     haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate);
+                     haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
+                     WiFi.status() == WL_CONNECTED);
         Serial.println("Render done");
     }
 
     if (nowMs - lastRefetchMs >= REFETCH_INTERVAL_MS) {
         lastRefetchMs = nowMs;
         refetchAndInit();
+    }
+
+    // Keeps the config page's WiFi dropdown from going stale forever. Runs
+    // here (blocking loop() for a few seconds, same class of tradeoff as
+    // the 24h element refetch above), never inside the page's own request
+    // handler - see wifi_setup.h's scanNetworksHtml().
+    if (nowMs - lastWifiScanMs >= WIFI_SCAN_REFRESH_INTERVAL_MS) {
+        lastWifiScanMs = nowMs;
+        wifiSetup.refreshCache();
     }
 }
