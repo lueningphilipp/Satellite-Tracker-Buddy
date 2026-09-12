@@ -19,6 +19,7 @@ class ConfigStore {
 public:
     void begin();                  // load from NVS into `current`
     void save();                   // persist `current` back to NVS
+    void clearWifiCreds();         // wipe just wifiSsid/wifiPass (NORAD id/lat-lon/n2yo key survive)
     bool hasWifiCreds() const { return current.wifiSsid.length() > 0; }
 
     DeviceConfig current;

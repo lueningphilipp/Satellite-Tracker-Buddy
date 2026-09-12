@@ -17,6 +17,12 @@ void ConfigStore::begin() {
     prefs.end();
 }
 
+void ConfigStore::clearWifiCreds() {
+    current.wifiSsid = "";
+    current.wifiPass = "";
+    save();
+}
+
 void ConfigStore::save() {
     Preferences prefs;
     prefs.begin(NVS_NS, /*readOnly=*/false);

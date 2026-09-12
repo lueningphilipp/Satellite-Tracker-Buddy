@@ -27,6 +27,32 @@ bool online = true;
 time_t launchDate = 0;
 bool haveLaunchDate = false;
 
+// Hold the board's built-in BOOT/FLASH button (GPIO0, active-low, already
+// wired on every ESP32-WROOM dev board - no extra button needed) for 3s
+// *while the device is already running* to forget the stored WiFi network
+// and open the "SatTracker-Setup" captive portal. NORAD id/lat-lon/n2yo key
+// are untouched.
+//
+// This must be sampled in loop(), NOT at/before setup() - GPIO0 doubles as
+// the chip's boot-mode strapping pin: if it's held LOW at the instant the
+// chip comes out of reset, the ROM bootloader drops straight into the UART
+// download/flashing mode instead of ever running our app, so a check at the
+// top of setup() can never fire for the "hold through power-on" gesture that
+// seems like the obvious way to use it (confirmed on real hardware: held
+// through power-up, zero app output, matches exactly what "stuck in the
+// flashing bootloader" looks like). Holding it only after boot has already
+// reached loop() avoids that strapping window entirely - and clearing creds
+// here calls wifiSetup.runCaptivePortal() directly in-process (no
+// ESP.restart()) so we never trigger a fresh hardware reset while a finger
+// might still be on the button.
+static const int8_t BOOT_BUTTON_PIN = 0;
+// Onboard LED most ESP32-WROOM dev boards carry on GPIO2 (Arduino core
+// doesn't define LED_BUILTIN for the generic "esp32dev" board, but this is
+// the near-universal convention). Only used for the confirmation blink - if
+// this particular board has no LED there, it's just an unused GPIO toggling.
+static const int8_t STATUS_LED_PIN = 2;
+static unsigned long buttonHeldSinceMs = 0;   // 0 = not currently held
+
 static void refetchAndInit() {
     OrbitalElements el;
     online = fetchElements(config.current.noradId, el);
@@ -67,6 +93,10 @@ void setup() {
 
     config.begin();
 
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    digitalWrite(STATUS_LED_PIN, LOW);
+
     if (!config.hasWifiCreds() || !wifiSetup.connect(config.current)) {
         Serial.println("No (or failed) WiFi creds - opening \"SatTracker-Setup\" AP...");
         wifiSetup.runCaptivePortal(config);   // never returns; restarts on save
@@ -98,6 +128,30 @@ static const unsigned long RENDER_INTERVAL_MS = 2UL * 60UL * 1000UL;   // full r
 
 void loop() {
     unsigned long nowMs = millis();
+
+    // See the big comment by BOOT_BUTTON_PIN's declaration for why this is
+    // sampled here (mid-run) and not in setup().
+    if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+        if (buttonHeldSinceMs == 0) buttonHeldSinceMs = nowMs;
+        if (nowMs - buttonHeldSinceMs >= 3000) {
+            Serial.println("BOOT held 3s - clearing stored WiFi credentials");
+            // Fast 5-blink sequence confirms the wipe without needing a
+            // serial monitor, and doubles as "you can let go of BOOT now" -
+            // release it before the portal's eventual ESP.restart() on save,
+            // or that reset will re-strap GPIO0 into the flashing bootloader
+            // the same way holding it through power-on does.
+            for (int i = 0; i < 5; i++) {
+                digitalWrite(STATUS_LED_PIN, HIGH);
+                delay(100);
+                digitalWrite(STATUS_LED_PIN, LOW);
+                delay(100);
+            }
+            config.clearWifiCreds();
+            wifiSetup.runCaptivePortal(config);   // never returns; restarts on save
+        }
+    } else {
+        buttonHeldSinceMs = 0;
+    }
 
     if (nowMs - lastSampleMs >= 1000) {
         lastSampleMs = nowMs;
