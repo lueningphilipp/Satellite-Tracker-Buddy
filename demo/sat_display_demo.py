@@ -289,9 +289,17 @@ def main():
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
     fields, online = fetch_omm(norad)
-    name = fetch_name(norad, load_secrets().get("n2yo_api_key"))
+    # Look up by fields["NORAD_CAT_ID"], NOT the requested `norad` - when
+    # fetch_omm() fails and falls back to FALLBACK_OMM (the ISS), the object
+    # actually being displayed is the ISS, not whatever was requested. Using
+    # `norad` here looked up (and showed) a *different* satellite's name/
+    # launch-date next to the ISS's orbital data - e.g. "in space 8d" next to
+    # the ISS's elements, because that was some other, freshly-launched
+    # object's age, not the ISS's ~27 years.
+    shown_norad = fields["NORAD_CAT_ID"]
+    name = fetch_name(shown_norad, load_secrets().get("n2yo_api_key")) if online else None
     if name: fields["OBJECT_NAME"] = name
-    sat = Sat(fields, fetch_launch_date(norad), online)
+    sat = Sat(fields, fetch_launch_date(shown_norad), online)
     print(f"{sat.name}: apogee {sat.apogee:.0f} km, perigee {sat.perigee:.0f} km, period {sat.period:.1f} min")
     if not online: print("  (offline - showing stale fallback data)")
     age = sat.age(datetime.now(timezone.utc))

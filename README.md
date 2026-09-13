@@ -38,10 +38,18 @@ development log (what's been tried, what broke, what's still open) see
   **SPECTRUM** (Isar Aerospace's rocket, whose second stage flies a single
   engine), the "you are here" marker becomes a tiny rocket silhouette
   instead of the usual reticle.
+- **Better names sooner** - CelesTrak's own `OBJECT_NAME` can lag for
+  days/weeks on freshly-launched, multi-payload objects (shows a generic
+  "OBJECT A", "OBJECT B", ...); an optional n2yo API key (config page)
+  resolves the real name sooner, in both the demo and firmware.
 - **Configurable display refresh rate and hostname** (see the config page,
   below).
 - **Change WiFi networks any time**, either from the config page or a
   physical button - no need to re-flash or factory-reset.
+- **Connection status at a glance** - the config page shows whether WiFi,
+  the elements fetch, the launch-date fetch, and the n2yo lookup are each
+  working, with the specific error (e.g. an HTTP status code) when one
+  isn't - no serial monitor needed to see what's wrong.
 
 ## Setting up
 
@@ -74,14 +82,21 @@ pio device monitor -b 115200   # serial output, for following boot/tracking logs
 
 ### The config page (`http://<device ip>/`)
 
+A status panel at the top shows WiFi (connected network + signal strength),
+the last elements fetch, launch-date fetch, and n2yo lookup outcomes - "OK"
+or the specific problem (e.g. "HTTP 403"), highlighted so real problems
+stand out from normal/unconfigured states (like "no key configured").
+
 - **NORAD catalog id** - type any number, or click a favourite (ISS,
   Tiangong, Hubble, NOAA-19). Saving refetches elements immediately and
   clears the trail.
 - **Site latitude/longitude** - not yet used by the renderer, reserved for a
   future "distance/pass from here" feature.
-- **n2yo API key** - optional, free-tier; collected here but the real-time
-  name lookup isn't wired into firmware yet (works in the demo already, see
-  Developer notes).
+- **n2yo API key** - optional, free-tier; resolves the satellite's real name
+  sooner than CelesTrak's own catalog does for freshly-launched objects (see
+  Features above). Only looked up when elements were actually fetched live -
+  skipped while showing fallback data, so it can't attach the wrong
+  satellite's name to the ISS fallback elements.
 - **Display full-refresh interval** - how often the e-paper redraws, in
   minutes (1-60, default 2). Takes effect immediately, no restart.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
@@ -115,7 +130,6 @@ while powering it on - see the warning below). It blinks the onboard LED
 
 ## Known limitations / not built yet
 
-- No n2yo name lookup in firmware yet (demo only).
 - No favourites-cycle physical button (BOOT is currently spoken for by the
   WiFi-reset gesture above).
 - No deep sleep / battery power path - the device expects to be USB-powered.

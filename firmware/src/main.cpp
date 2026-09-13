@@ -4,6 +4,7 @@
 #include "core/config.h"
 #include "core/wifi_setup.h"
 #include "core/elements.h"
+#include "core/status.h"
 #include "core/sgp4_track.h"
 #include "web/web_server.h"
 #include "display/epaper_render.h"
@@ -55,12 +56,13 @@ static unsigned long buttonHeldSinceMs = 0;   // 0 = not currently held
 
 static void refetchAndInit() {
     OrbitalElements el;
-    online = fetchElements(config.current.noradId, el);
+    online = fetchElements(config.current.noradId, el, &connStatus.elementsStatus);
     if (online) {
         Serial.printf("Fetched elements for %s: %s\n",
                        config.current.noradId.c_str(), el.name.c_str());
     } else {
-        Serial.println("Elements fetch failed - using stale fallback (ISS)");
+        Serial.printf("Elements fetch failed (%s) - using stale fallback (ISS)\n",
+                       connStatus.elementsStatus.c_str());
         el = fallbackElements();
     }
 
@@ -68,13 +70,46 @@ static void refetchAndInit() {
         Serial.println("sgp4init() failed - bad elements?");
         return;
     }
+
+    // From here on, use el.noradCatId (the object actually being displayed)
+    // rather than config.current.noradId (what was requested) - they only
+    // differ when the fetch above failed and fell back to the ISS, and using
+    // the requested id in that case would look up a *different* satellite's
+    // name/launch-date next to the ISS's orbital numbers. Confirmed as a
+    // real bug (showed a freshly-launched object's "8 days in space" next
+    // to the ISS's data) - fixed in the demo first, see its main().
+    String shownNorad = String(el.noradCatId);
+
+    // Best-effort name upgrade via n2yo - only when we're actually showing
+    // the requested object (not fallback data) and a key is configured.
+    // Skipped entirely rather than looked-up-for-the-wrong-object in the
+    // fallback case, same reasoning as above; also avoids quietly losing
+    // the "(fallback)" suffix that's otherwise the only other signal
+    // (besides the OFFLINE dot) that this is stale data.
+    if (online && config.current.n2yoApiKey.length()) {
+        String n2yoName;
+        if (fetchN2yoName(shownNorad, config.current.n2yoApiKey, n2yoName, &connStatus.n2yoStatus)) {
+            Serial.printf("n2yo resolved name: %s\n", n2yoName.c_str());
+            el.name = n2yoName;
+        } else {
+            Serial.printf("n2yo name lookup failed (%s) - keeping CelesTrak name\n",
+                           connStatus.n2yoStatus.c_str());
+        }
+    } else {
+        connStatus.n2yoStatus = config.current.n2yoApiKey.length()
+                                     ? "skipped (offline/fallback data)"
+                                     : "no key configured";
+    }
+
     lastElements = el;
     Serial.printf("%s (%s): apogee %.0f km, perigee %.0f km, period %.1f min\n",
                   el.name.c_str(), satTrack.orbitClass(), satTrack.apogeeKm(),
                   satTrack.perigeeKm(), satTrack.periodMin());
 
-    haveLaunchDate = fetchLaunchDate(config.current.noradId, launchDate);
-    if (!haveLaunchDate) Serial.println("Launch date fetch failed - time-in-space will be hidden");
+    haveLaunchDate = fetchLaunchDate(shownNorad, launchDate, &connStatus.launchDateStatus);
+    if (!haveLaunchDate)
+        Serial.printf("Launch date fetch failed (%s) - time-in-space will be hidden\n",
+                       connStatus.launchDateStatus.c_str());
 
     // New satellite selected (or refetched) -> old trail no longer applies,
     // and its sampling interval scales with the (possibly new) period, per

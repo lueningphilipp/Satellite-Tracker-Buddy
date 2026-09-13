@@ -44,19 +44,23 @@ static bool parseEpoch(const String& s, OrbitalElements& out) {
     return true;
 }
 
-bool fetchElements(const String& noradId, OrbitalElements& out) {
+bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) {
     WiFiClientSecure client;
     client.setInsecure();   // no CA bundle on-device; acceptable risk for a
                              // read-only hobby fetch, see comment in main.cpp
 
     HTTPClient http;
     String url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=" + noradId + "&FORMAT=csv";
-    if (!http.begin(client, url)) return false;
+    if (!http.begin(client, url)) {
+        if (errOut) *errOut = "couldn't start request";
+        return false;
+    }
 
     int code = http.GET();
     if (code != HTTP_CODE_OK) {
         Serial.printf("elements fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
+        if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
         return false;
     }
     String body = http.getString();
@@ -66,15 +70,18 @@ bool fetchElements(const String& noradId, OrbitalElements& out) {
     // data found" 404 body would already have been caught by the code check
     // above, so an empty/short body here means something else went wrong.
     int nl = body.indexOf('\n');
-    if (nl < 0) return false;
+    if (nl < 0) { if (errOut) *errOut = "empty response"; return false; }
     String row = body.substring(nl + 1);
     row.trim();
-    if (row.length() == 0) return false;
+    if (row.length() == 0) { if (errOut) *errOut = "no data rows"; return false; }
 
     OrbitalElements parsed;
     parsed.name = csvField(row, COL_NAME);
     parsed.noradCatId = csvField(row, COL_NORAD_ID).toInt();
-    if (!parseEpoch(csvField(row, COL_EPOCH), parsed)) return false;
+    if (!parseEpoch(csvField(row, COL_EPOCH), parsed)) {
+        if (errOut) *errOut = "malformed epoch";
+        return false;
+    }
     parsed.meanMotionRevPerDay = csvField(row, COL_MEAN_MOTION).toDouble();
     parsed.eccentricity = csvField(row, COL_ECC).toDouble();
     parsed.inclinationDeg = csvField(row, COL_INCL).toDouble();
@@ -83,9 +90,13 @@ bool fetchElements(const String& noradId, OrbitalElements& out) {
     parsed.meanAnomalyDeg = csvField(row, COL_MEAN_ANOM).toDouble();
     parsed.bstar = csvField(row, COL_BSTAR).toDouble();
 
-    if (parsed.name.length() == 0 || parsed.meanMotionRevPerDay <= 0) return false;
+    if (parsed.name.length() == 0 || parsed.meanMotionRevPerDay <= 0) {
+        if (errOut) *errOut = "malformed data";
+        return false;
+    }
 
     out = parsed;
+    if (errOut) *errOut = "OK";
     return true;
 }
 
@@ -100,17 +111,21 @@ static time_t unixFromYMD(int year, int mon, int day) {
     return (time_t)((jd - 2440587.5) * 86400.0 + 0.5);
 }
 
-bool fetchLaunchDate(const String& noradId, time_t& out) {
+bool fetchLaunchDate(const String& noradId, time_t& out, String* errOut) {
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;
     String url = "https://celestrak.org/satcat/records.php?CATNR=" + noradId + "&FORMAT=json";
-    if (!http.begin(client, url)) return false;
+    if (!http.begin(client, url)) {
+        if (errOut) *errOut = "couldn't start request";
+        return false;
+    }
 
     int code = http.GET();
     if (code != HTTP_CODE_OK) {
         Serial.printf("launch date fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
+        if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
         return false;
     }
     String body = http.getString();
@@ -120,14 +135,62 @@ bool fetchLaunchDate(const String& noradId, time_t& out) {
     // format field - matches CSV parsing's style elsewhere in this file.
     const char* key = "\"LAUNCH_DATE\":\"";
     int idx = body.indexOf(key);
-    if (idx < 0) return false;
+    if (idx < 0) { if (errOut) *errOut = "no LAUNCH_DATE in response"; return false; }
     idx += strlen(key);
     String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
-    if (dateStr.length() != 10) return false;
+    if (dateStr.length() != 10) { if (errOut) *errOut = "malformed date"; return false; }
 
     int y, mo, d;
-    if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) return false;
+    if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) {
+        if (errOut) *errOut = "malformed date";
+        return false;
+    }
     out = unixFromYMD(y, mo, d);   // UTC, not local time - all times UTC internally per CLAUDE.md
+    if (errOut) *errOut = "OK";
+    return true;
+}
+
+bool fetchN2yoName(const String& noradId, const String& apiKey, String& outName, String* errOut) {
+    if (apiKey.length() == 0) {
+        if (errOut) *errOut = "no key configured";
+        return false;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    // Matches the demo's fetch_name() URL exactly (n2yo's own docs show this
+    // "&" rather than "?" form for this endpoint) - not changing it here.
+    String url = "https://api.n2yo.com/rest/v1/satellite/tle/" + noradId + "&apiKey=" + apiKey;
+    if (!http.begin(client, url)) {
+        if (errOut) *errOut = "couldn't start request";
+        return false;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("n2yo name lookup: HTTP %d for CATNR=%s\n", code, noradId.c_str());
+        http.end();
+        if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
+        return false;
+    }
+    String body = http.getString();
+    http.end();
+
+    // Plain string search, same style as fetchLaunchDate() above - one
+    // fixed-format field doesn't need a full JSON parse.
+    const char* key = "\"satname\":\"";
+    int idx = body.indexOf(key);
+    if (idx < 0) { if (errOut) *errOut = "no satname in response"; return false; }
+    idx += strlen(key);
+    int end = body.indexOf('"', idx);
+    if (end < 0) { if (errOut) *errOut = "malformed response"; return false; }
+    String name = body.substring(idx, end);
+    name.trim();
+    if (name.length() == 0) { if (errOut) *errOut = "empty name"; return false; }
+
+    outName = name;
+    if (errOut) *errOut = "OK";
     return true;
 }
 

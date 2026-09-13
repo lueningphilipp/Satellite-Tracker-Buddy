@@ -1,5 +1,7 @@
 #include "web_server.h"
 #include "../core/wifi_setup.h"
+#include "../core/status.h"
+#include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
 ConfigWebServer configWebServer;
@@ -28,8 +30,17 @@ button{padding:.6em 1em;border:0;border-radius:4px;background:#222;color:#fff;ma
 .fav{background:#567}
 .save{width:100%;padding:.8em;background:#284;font-size:1.05em;margin-top:1em}
 hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
+.status{background:#f4f4f4;border-radius:6px;padding:.7em 1em;margin-bottom:1.2em;font-size:.85em;line-height:1.6}
+.status b{color:#555}
+.bad{color:#a22}
 </style></head><body>
 <h2>Satellite Tracker</h2>
+<div class="status">
+  <b>WiFi:</b> %WIFISTATUS%<br>
+  <b>Elements fetch:</b> %ELEMENTSSTATUS%<br>
+  <b>Launch date fetch:</b> %LAUNCHSTATUS%<br>
+  <b>n2yo name lookup:</b> %N2YOSTATUS%
+</div>
 <form method="POST" action="/config">
   <label>NORAD catalog id</label>
   <input name="norad" id="norad" value="%NORAD%" required>
@@ -84,6 +95,17 @@ static String buildFavButtons() {
     return html;
 }
 
+// Wraps anything that isn't "OK" or a normal/neutral state (no key
+// configured yet, not fetched yet) in a highlight span, so actual
+// connection problems (e.g. CelesTrak's known gp.php 403s, see CLAUDE.md's
+// TODO) stand out instead of blending into normal text - without also
+// flagging "you haven't set an optional API key" as if it were an error.
+static String statusSpan(const String& status) {
+    if (status == "OK" || status == "no key configured" || status == "not fetched yet")
+        return status;
+    return "<span class=\"bad\">" + status + "</span>";
+}
+
 static String renderPage(const DeviceConfig& cfg) {
     String page = PAGE_TEMPLATE;
     page.replace("%NORAD%", cfg.noradId);
@@ -99,6 +121,18 @@ static String renderPage(const DeviceConfig& cfg) {
     // Cached, not a live scan - see wifi_setup.h's scanNetworksHtml() for
     // why a live scan can't safely happen inside this request handler.
     page.replace("%WIFIOPTIONS%", wifiSetup.cachedOptionsHtml());
+
+    // Live WiFi.status() (cheap, non-blocking) alongside the cached fetch
+    // statuses from the last refetchAndInit() - together these are meant to
+    // answer "why isn't this showing what I expect" without the serial
+    // monitor.
+    String wifiStatus = WiFi.status() == WL_CONNECTED
+        ? ("Connected to " + WiFi.SSID() + " (" + String(WiFi.RSSI()) + " dBm)")
+        : "<span class=\"bad\">Not connected</span>";
+    page.replace("%WIFISTATUS%", wifiStatus);
+    page.replace("%ELEMENTSSTATUS%", statusSpan(connStatus.elementsStatus));
+    page.replace("%LAUNCHSTATUS%", statusSpan(connStatus.launchDateStatus));
+    page.replace("%N2YOSTATUS%", statusSpan(connStatus.n2yoStatus));
     return page;
 }
 
@@ -118,7 +152,11 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"hasN2yoKey\":" + String(store.current.n2yoApiKey.length() > 0 ? "true" : "false") + ",";
         json += "\"hostname\":\"" + store.current.hostname + "\",";
         json += "\"refreshMinutes\":" + String(store.current.displayRefreshMinutes) + ",";
-        json += "\"wifiSsid\":\"" + store.current.wifiSsid + "\"";
+        json += "\"wifiSsid\":\"" + store.current.wifiSsid + "\",";
+        json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+        json += "\"elementsStatus\":\"" + connStatus.elementsStatus + "\",";
+        json += "\"launchDateStatus\":\"" + connStatus.launchDateStatus + "\",";
+        json += "\"n2yoStatus\":\"" + connStatus.n2yoStatus + "\"";
         json += "}";
         req->send(200, "application/json", json);
     });

@@ -6,6 +6,7 @@
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 #include <math.h>
 #include <time.h>
 #include <stdio.h>
@@ -219,10 +220,16 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         // satellite name above it. Pushed further down from the title than
         // before, for more visual separation.
         display.setFont(&FreeSans9pt7b);
+        // Labels in the bold weight of the same 9pt face, values in the
+        // regular weight - makes "Apogee"/"Perigee"/etc read as labels at a
+        // glance instead of blending into the numbers next to them.
         auto printLabelValue = [&](int labelX, int valueRightEdge, int y,
                                     const char* lbl, const char* val) {
+            display.setFont(&FreeSansBold9pt7b);
             display.setCursor(labelX, y);
             display.print(lbl);
+
+            display.setFont(&FreeSans9pt7b);
             int16_t tbx, tby; uint16_t tbw, tbh;
             display.getTextBounds(val, 0, 0, &tbx, &tby, &tbw, &tbh);
             display.setCursor(valueRightEdge - (int)tbw, y);
