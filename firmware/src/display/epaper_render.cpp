@@ -342,7 +342,14 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
 
         if (haveLaunchDate) {
             double days = difftime(now, launchDate) / 86400.0;
-            snprintf(valBuf, sizeof(valBuf), "%.0f d", days);
+            // Whole elapsed days (floored), not rounded to nearest - %.0f
+            // rounded up a full day early, at the halfway mark instead of a
+            // full day boundary. Confirmed as a real discrepancy: NORAD
+            // 100614 launched 2026-09-05, and on 2026-09-13 (8.53 exact
+            // days later) this showed "9 d" instead of the expected "8 d".
+            // Ported from the demo's Sat.age(), fixed there first.
+            long wholeDays = (long)floor(days);
+            snprintf(valBuf, sizeof(valBuf), "%ld d", wholeDays);
             printLabelValue(col3X, col3Right, row1Y, "In space", valBuf);
             snprintf(valBuf, sizeof(valBuf), "(%.1f yr)", days / 365.25);
             printRightAligned(col3Right, row2Y, valBuf);   // continuation, no label

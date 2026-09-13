@@ -70,7 +70,11 @@ your router's client list).
 A status panel at the top shows WiFi (connected network + signal strength),
 the last elements fetch, launch-date fetch, and n2yo lookup outcomes - "OK"
 or the specific problem (e.g. "HTTP 403"), highlighted so real problems
-stand out from normal/unconfigured states (like "no key configured").
+stand out from normal/unconfigured states (like "no key configured"). It
+also shows a live count of CelesTrak requests made in the last 2 hours
+(persisted across reboots, so a restart can't hide recent activity),
+highlighted once it gets close to their actual 50-request firewall
+threshold - see "Rate limits" below.
 
 Saving refetches/recomputes whatever changed (satellite, site location,
 n2yo key) immediately, and the display redraws right away too rather than

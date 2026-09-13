@@ -127,10 +127,17 @@ class Sat:
         self.orbit_class = classify_orbit(self.apogee, self.perigee, self.incl, self.period)
 
     def age(self, now):
-        """Days/years in space as of `now`, or None if launch date is unknown."""
+        """Days/years in space as of `now`, or None if launch date is unknown.
+        Days is the count of *complete* elapsed days (floored, not rounded) -
+        matches the usual "N days old" convention. Rounding to nearest
+        (the original behavior) made this tick over to the next day at the
+        halfway mark instead of at a full day boundary - confirmed as a
+        real discrepancy: NORAD 100614 launched 2026-09-05, and on
+        2026-09-13 at 12:50 UTC (8.53 exact days later) it showed "9 d"
+        instead of the expected "8 d"."""
         if not self.launch_date: return None
         days = (now - self.launch_date).total_seconds() / 86400
-        return days, days / 365.25
+        return math.floor(days), days / 365.25
 
     def latlon(self, t):
         jd, fr = jday(t.year, t.month, t.day, t.hour, t.minute, t.second + t.microsecond/1e6)

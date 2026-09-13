@@ -2,6 +2,7 @@
 #include "../core/wifi_setup.h"
 #include "../core/status.h"
 #include "../core/geoip.h"
+#include "../core/request_tracker.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
@@ -40,7 +41,10 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   <b>WiFi:</b> %WIFISTATUS%<br>
   <b>Elements fetch:</b> %ELEMENTSSTATUS%<br>
   <b>Launch date fetch:</b> %LAUNCHSTATUS%<br>
-  <b>n2yo name lookup:</b> %N2YOSTATUS%
+  <b>n2yo name lookup:</b> %N2YOSTATUS%<br>
+  <b>CelesTrak requests (last 2h):</b> %REQCOUNT% / 50 (their firewall
+  threshold - see the README's "Rate limits" section; this device's fetch
+  interval floor already keeps normal use well under it)
 </div>
 <form method="POST" action="/config">
   <label>NORAD catalog id</label>
@@ -191,6 +195,13 @@ static String renderPage(const DeviceConfig& cfg) {
     page.replace("%ELEMENTSSTATUS%", statusSpan(connStatus.elementsStatus));
     page.replace("%LAUNCHSTATUS%", statusSpan(connStatus.launchDateStatus));
     page.replace("%N2YOSTATUS%", statusSpan(connStatus.n2yoStatus));
+
+    // Highlighted only once it's getting close to CelesTrak's actual
+    // threshold (50) - not on every nonzero count, which would make a
+    // perfectly normal handful of requests look like a problem.
+    int reqCount = celestrakRequests.countInLast2h();
+    String reqCountStr = String(reqCount);
+    page.replace("%REQCOUNT%", reqCount >= 40 ? ("<span class=\"bad\">" + reqCountStr + "</span>") : reqCountStr);
     return page;
 }
 
@@ -234,7 +245,8 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
         json += "\"elementsStatus\":\"" + connStatus.elementsStatus + "\",";
         json += "\"launchDateStatus\":\"" + connStatus.launchDateStatus + "\",";
-        json += "\"n2yoStatus\":\"" + connStatus.n2yoStatus + "\"";
+        json += "\"n2yoStatus\":\"" + connStatus.n2yoStatus + "\",";
+        json += "\"celestrakRequests2h\":" + String(celestrakRequests.countInLast2h());
         json += "}";
         req->send(200, "application/json", json);
     });
