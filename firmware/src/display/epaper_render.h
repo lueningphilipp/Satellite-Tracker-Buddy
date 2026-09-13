@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include "../core/sgp4_track.h"
 #include "../core/elements.h"
+#include "../core/pass_predict.h"
 #include "trail_buffer.h"
 
 // One-time GxEPD2 + SPI init. Call once from setup().
@@ -23,7 +24,12 @@ void epaperInit();
 // TODO for the on-device scan test that picked its size (25x25 physical
 // pixels, 1px/module - much smaller than the module-count math alone
 // suggested, but that's what a real phone camera actually resolved).
+// haveNextPassInfo/passState/passTime: next-pass-overhead prediction (see
+// core/pass_predict.h) - the whole "Next pass" column is hidden if
+// haveNextPassInfo is false (no site lat/lon configured), matching the
+// existing haveLaunchDate pattern for the "In space" column.
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
                    time_t launchDate, bool haveLaunchDate, bool wifiConnected,
-                   const String& configUrl);
+                   const String& configUrl,
+                   bool haveNextPassInfo, PassState passState, time_t passTime);

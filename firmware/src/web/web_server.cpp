@@ -46,17 +46,37 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   <input name="norad" id="norad" value="%NORAD%" required>
   <div>%FAVBUTTONS%</div>
 
-  <label>Site latitude</label>
-  <input name="lat" value="%LAT%" type="number" step="any">
+  <label>Site latitude (optional - enables the "Next pass" prediction on
+  the display: when the satellite will next be at least 10&deg; above your
+  horizon. Leave both at 0 to disable it - not every orbit passes over
+  every location, so it may also show "None")</label>
+  <input id="lat" name="lat" value="%LAT%" type="number" step="any">
   <label>Site longitude</label>
-  <input name="lon" value="%LON%" type="number" step="any">
+  <input id="lon" name="lon" value="%LON%" type="number" step="any">
+  <button type="button" class="fav" onclick="useMyLocation()">Use my location</button>
+  <div id="geoStatus" style="font-size:.8em;color:#555;margin:.3em 0"></div>
 
   <label>n2yo API key (optional - used to resolve the real name sooner for
-  freshly-launched objects CelesTrak still shows generically)</label>
-  <input name="n2yo" value="%N2YO%">
+  freshly-launched objects CelesTrak still shows generically). Leaving this
+  blank on save keeps the current key - check the box below to actually
+  remove it. Masked here the same way the WiFi password is, since anyone
+  looking at (or screenshotting) this page would otherwise see it in
+  plain text.</label>
+  <input name="n2yo" value="%N2YO%" type="password">
+  <label style="display:block;margin:.3em 0 1em">
+    <input type="checkbox" name="n2yo_clear" value="1" style="width:auto;margin:0 .4em 0 0;vertical-align:middle">
+    Remove n2yo key
+  </label>
 
   <label>Display full-refresh interval (minutes)</label>
   <input name="refresh" value="%REFRESH%" type="number" min="1" max="60" step="1">
+
+  <label>Elements/launch-date fetch interval (minutes) - how often CelesTrak
+  is polled for new orbital data. Kept at 10 minutes minimum: CelesTrak
+  firewalls an IP after 50 HTTP error responses in a 2-hour window, and two
+  requests happen per fetch, so even at the minimum this stays well under
+  that (see the README's "Rate limits" section).</label>
+  <input name="fetch" value="%FETCH%" type="number" min="10" max="1440" step="1">
 
   <label>Device hostname (shown to your router/DHCP; requires a reconnect
   to take effect)</label>
@@ -79,6 +99,25 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 </form>
 <script>
 function pick(id){document.getElementById('norad').value=id;}
+function useMyLocation(){
+  var status = document.getElementById('geoStatus');
+  if (!navigator.geolocation) {
+    status.textContent = 'Geolocation not supported by this browser.';
+    return;
+  }
+  status.textContent = 'Locating...';
+  navigator.geolocation.getCurrentPosition(function(pos){
+    document.getElementById('lat').value = pos.coords.latitude.toFixed(4);
+    document.getElementById('lon').value = pos.coords.longitude.toFixed(4);
+    status.textContent = 'Filled in from your browser - remember to Save below.';
+  }, function(err){
+    // Most browsers only allow this API over HTTPS (or localhost) - this
+    // device only serves plain HTTP, so it may simply be blocked outright
+    // rather than prompting, depending on the browser.
+    status.textContent = 'Could not get your location (' + err.message +
+      '). Some browsers only allow this over HTTPS - type the coordinates in manually instead.';
+  });
+}
 </script>
 </body></html>
 )HTML";
@@ -114,6 +153,7 @@ static String renderPage(const DeviceConfig& cfg) {
     page.replace("%LON%", String(cfg.siteLon, 4));
     page.replace("%N2YO%", cfg.n2yoApiKey);
     page.replace("%REFRESH%", String(cfg.displayRefreshMinutes));
+    page.replace("%FETCH%", String(cfg.elementsFetchMinutes));
     page.replace("%HOSTNAME%", cfg.hostname);
     // Current SSID only - never the password, so it can't leak into a page
     // source view.
@@ -152,6 +192,7 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"hasN2yoKey\":" + String(store.current.n2yoApiKey.length() > 0 ? "true" : "false") + ",";
         json += "\"hostname\":\"" + store.current.hostname + "\",";
         json += "\"refreshMinutes\":" + String(store.current.displayRefreshMinutes) + ",";
+        json += "\"fetchMinutes\":" + String(store.current.elementsFetchMinutes) + ",";
         json += "\"wifiSsid\":\"" + store.current.wifiSsid + "\",";
         json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
         json += "\"elementsStatus\":\"" + connStatus.elementsStatus + "\",";
@@ -168,8 +209,18 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             store.current.siteLat = req->getParam("lat", true)->value().toFloat();
         if (req->hasParam("lon", true))
             store.current.siteLon = req->getParam("lon", true)->value().toFloat();
-        if (req->hasParam("n2yo", true))
+        // Blank alone does NOT clear the key - it means "unchanged". The
+        // page always pre-fills this field with the current key, so a
+        // normal browser save carries it forward automatically; blank only
+        // shows up from a raw/scripted POST that didn't set it (hit this
+        // project during development - a batch of curl test calls wiped a
+        // real n2yo key this way) or a user who genuinely cleared the
+        // field, which the checkbox now disambiguates explicitly.
+        if (req->hasParam("n2yo_clear", true)) {
+            store.current.n2yoApiKey = "";
+        } else if (req->hasParam("n2yo", true) && req->getParam("n2yo", true)->value().length() > 0) {
             store.current.n2yoApiKey = req->getParam("n2yo", true)->value();
+        }
         if (req->hasParam("refresh", true)) {
             int mins = req->getParam("refresh", true)->value().toInt();
             // Clamp rather than trust the form's min/max, which a manual
@@ -180,6 +231,16 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             if (mins < 1) mins = 1;
             if (mins > 60) mins = 60;
             store.current.displayRefreshMinutes = mins;
+        }
+        if (req->hasParam("fetch", true)) {
+            int mins = req->getParam("fetch", true)->value().toInt();
+            // Hard floor of 10 minutes regardless of what's POSTed - see the
+            // field's label above for the "50 errors/2h" reasoning. This is
+            // the actual enforcement point; the form's min= is just a UI hint
+            // a manual POST could bypass.
+            if (mins < 10) mins = 10;
+            if (mins > 1440) mins = 1440;
+            store.current.elementsFetchMinutes = mins;
         }
 
         // Hostname and WiFi changes only take effect on a fresh WiFi.begin()

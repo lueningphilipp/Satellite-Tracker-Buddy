@@ -6,6 +6,7 @@
 #include "core/elements.h"
 #include "core/status.h"
 #include "core/sgp4_track.h"
+#include "core/pass_predict.h"
 #include "web/web_server.h"
 #include "display/epaper_render.h"
 #include "display/trail_buffer.h"
@@ -27,6 +28,58 @@ OrbitalElements lastElements;   // kept around so loop() can pass it to epaperRe
 bool online = true;
 time_t launchDate = 0;
 bool haveLaunchDate = false;
+
+// Next-pass prediction (see core/pass_predict.h). haveNextPassInfo gates
+// whether a site location is configured at all (siteLat/siteLon both 0.0
+// is treated as "not set" - nobody's real site is exactly at 0N,0E, the
+// same sentinel-by-convention approach already used elsewhere for this
+// pair of fields).
+bool haveNextPassInfo = false;
+PassState nextPassState = PassState::kNone;
+time_t nextPassTime = 0;
+static unsigned long lastPassCheckMs = 0;
+static const unsigned long PASS_CHECK_INTERVAL_MS = 5UL * 60UL * 1000UL;
+
+// **Real crash found on real hardware, twice, while building this**:
+// findNextPass() is a tight CPU loop (thousands of SGP4 calls). It was
+// first called directly from refetchAndInit(), which the config page's
+// POST handler also calls synchronously via onConfigSaved - i.e. on the
+// async_tcp task, exactly like the WiFi-scan watchdog crash found earlier
+// this session (see CLAUDE.md's TODO). A single call didn't crash it, but
+// a quick sequence of config-page saves did: "Task watchdog got
+// triggered... async_tcp... Aborting()... Rebooting." An attempted fix
+// with a plain non-atomic reentrancy flag, then a real atomic
+// compare-and-swap, both still let two calls land close together (ESP32 is
+// dual-core, so the async_tcp-task call and loop()'s own periodic check can
+// genuinely run at once) - true concurrent execution isn't really the
+// point to prevent here anyway; the *task* is. So: findNextPass() is now
+// only ever invoked from loop() (this flag is how refetchAndInit(), which
+// runs on either task, asks for a recompute without doing it itself).
+static bool passRecomputeNeeded = true;
+
+// Only call this from loop() - never from refetchAndInit() directly, see
+// above.
+static void recomputeNextPass() {
+    lastPassCheckMs = millis();
+    passRecomputeNeeded = false;
+
+    haveNextPassInfo = (config.current.siteLat != 0.0f || config.current.siteLon != 0.0f);
+    if (!haveNextPassInfo) return;
+
+    nextPassState = findNextPass(satTrack, config.current.siteLat, config.current.siteLon,
+                                  time(nullptr), nextPassTime);
+    switch (nextPassState) {
+        case PassState::kNow:
+            Serial.println("Next pass: overhead now");
+            break;
+        case PassState::kFound:
+            Serial.printf("Next pass: in %.0f min\n", difftime(nextPassTime, time(nullptr)) / 60.0);
+            break;
+        case PassState::kNone:
+            Serial.println("Next pass: none found in search window (orbit may never reach this site)");
+            break;
+    }
+}
 
 // Hold the board's built-in BOOT/FLASH button (GPIO0, active-low, already
 // wired on every ESP32-WROOM dev board - no extra button needed) for 3s
@@ -117,6 +170,14 @@ static void refetchAndInit() {
     // trail buffer" + "Trail sampling interval... must scale with period".
     trail.clear();
     trail.setPeriodMinutes(satTrack.periodMin());
+
+    // New satellite (or a site lat/lon change, which also routes through
+    // this function via the config page's onConfigSaved callback) means
+    // the previous next-pass prediction no longer applies either. Flag it
+    // for loop() to actually recompute - see recomputeNextPass()'s comment
+    // for why this function must never call it directly (this can run on
+    // the async_tcp task).
+    passRecomputeNeeded = true;
 }
 
 void setup() {
@@ -164,7 +225,6 @@ static unsigned long lastSampleMs = 0;
 static unsigned long lastRenderMs = 0;
 static unsigned long lastRefetchMs = 0;
 static unsigned long lastWifiScanMs = 0;
-static const unsigned long REFETCH_INTERVAL_MS = 24UL * 3600UL * 1000UL;
 static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 
 void loop() {
@@ -207,21 +267,12 @@ void loop() {
         }
     }
 
-    // Read live from config each time (cheap) rather than caching, so a
-    // refresh-rate change from the config page takes effect on the very
-    // next check - no restart needed, unlike WiFi/hostname changes.
-    unsigned long renderIntervalMs = (unsigned long)config.current.displayRefreshMinutes * 60UL * 1000UL;
-    if (nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
-        lastRenderMs = nowMs;
-        Serial.println("Rendering e-paper...");
-        epaperRender(satTrack, lastElements, trail, time(nullptr), online,
-                     haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
-                     WiFi.status() == WL_CONNECTED,
-                     "http://" + WiFi.localIP().toString() + "/");
-        Serial.println("Render done");
-    }
-
-    if (nowMs - lastRefetchMs >= REFETCH_INTERVAL_MS) {
+    // Read live from config each time (cheap), same pattern as
+    // renderIntervalMs below - the config page clamps this to >=10 minutes
+    // server-side (see web_server.cpp) to keep even the most aggressive
+    // setting well clear of CelesTrak's 50-errors/2h firewall threshold.
+    unsigned long refetchIntervalMs = (unsigned long)config.current.elementsFetchMinutes * 60UL * 1000UL;
+    if (nowMs - lastRefetchMs >= refetchIntervalMs) {
         lastRefetchMs = nowMs;
         refetchAndInit();
     }
@@ -233,5 +284,46 @@ void loop() {
     if (nowMs - lastWifiScanMs >= WIFI_SCAN_REFRESH_INTERVAL_MS) {
         lastWifiScanMs = nowMs;
         wifiSetup.refreshCache();
+    }
+
+    // Keeps the next-pass prediction fresh - only ever computed here in
+    // loop(), never from refetchAndInit() directly, see recomputeNextPass()'s
+    // comment. Three triggers: (1) passRecomputeNeeded, set by
+    // refetchAndInit() (new satellite or a site lat/lon change) - fires
+    // regardless of the current haveNextPassInfo, since that flag itself is
+    // what this recompute call re-evaluates; (2) a predicted rise time that
+    // has actually elapsed, so a stale "pass" doesn't sit there showing a
+    // time already in the past; (3) a 5-minute periodic cadence, which also
+    // covers the kNow state (it has no natural expiry of its own - without
+    // this, a brief pass could keep showing "overhead now" long after the
+    // satellite actually set again).
+    //
+    // Placed BEFORE the render block below on purpose (moved here after a
+    // real report: a render that happens on the same loop() iteration a
+    // refetch just set passRecomputeNeeded on would otherwise use the
+    // stale pre-recompute state - "Next pass" missing or wrong for one
+    // whole render cycle right after the exact moment - satellite/config
+    // change, or a scheduled refetch - a viewer is most likely to be
+    // looking at the screen expecting it to be current).
+    bool passTimeElapsed = haveNextPassInfo && nextPassState == PassState::kFound
+                            && time(nullptr) >= nextPassTime;
+    bool passStale = haveNextPassInfo && (nowMs - lastPassCheckMs >= PASS_CHECK_INTERVAL_MS);
+    if (passRecomputeNeeded || passTimeElapsed || passStale) {
+        recomputeNextPass();
+    }
+
+    // Read live from config each time (cheap) rather than caching, so a
+    // refresh-rate change from the config page takes effect on the very
+    // next check - no restart needed, unlike WiFi/hostname changes.
+    unsigned long renderIntervalMs = (unsigned long)config.current.displayRefreshMinutes * 60UL * 1000UL;
+    if (nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
+        lastRenderMs = nowMs;
+        Serial.println("Rendering e-paper...");
+        epaperRender(satTrack, lastElements, trail, time(nullptr), online,
+                     haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
+                     WiFi.status() == WL_CONNECTED,
+                     "http://" + WiFi.localIP().toString() + "/",
+                     haveNextPassInfo, nextPassState, nextPassTime);
+        Serial.println("Render done");
     }
 }

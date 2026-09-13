@@ -14,7 +14,9 @@ on your desk.
 - **Live ground track** - past track dashed, future track solid, both
   scaled to the satellite's actual orbital period so a slow GEO/Molniya
   orbit doesn't fill the trail with one lap's worth of samples in a few
-  minutes the way a fast LEO pass would.
+  minutes the way a fast LEO pass would. Drawn in white ink over land and
+  black over sea, so it stays visible crossing continents instead of
+  disappearing into the landmass fill.
 - **Day/night terminator** shown on the map (sub-solar point), so you can
   tell at a glance whether the satellite is in daylight or eclipse.
 - **Apogee, perigee, inclination, period, orbit class** (LEO/MEO/GEO/SSO/
@@ -47,6 +49,15 @@ on your desk.
   the elements fetch, the launch-date fetch, and the n2yo lookup are each
   working, with the specific error (e.g. an HTTP status code) when one
   isn't - no serial monitor needed to see what's wrong.
+- **Next pass over your location** - set your site's latitude/longitude on
+  the config page and the display shows when the satellite will next be at
+  least 10° above your horizon (a countdown plus the clock time), or "Now"
+  if it's overhead already. Not every orbit passes over every location -
+  it'll correctly show "None" rather than a wrong guess when the satellite
+  genuinely never reaches your site.
+- **Configurable elements-fetch interval** (see the config page, below) -
+  how often CelesTrak is re-polled for orbital data, kept at a safe minimum
+  to respect their rate limits (see "Rate limits" below).
 
 ## How to use it
 
@@ -64,15 +75,25 @@ stand out from normal/unconfigured states (like "no key configured").
 - **NORAD catalog id** - type any number, or click a favourite (ISS,
   Tiangong, Hubble, Spectrum). Saving refetches elements immediately and
   clears the trail.
-- **Site latitude/longitude** - not yet used by the renderer, reserved for a
-  future "distance/pass from here" feature.
+- **Site latitude/longitude** - optional; enables the "Next pass" prediction
+  on the display (see Features above). Leave both at 0 to disable it. A
+  "Use my location" button fills these in from your browser's geolocation -
+  note this may not work on every browser, since it only allows this over
+  HTTPS on many of them, and the device only serves plain HTTP; type the
+  coordinates in manually if it doesn't.
 - **n2yo API key** - optional, free-tier; resolves the satellite's real name
   sooner than CelesTrak's own catalog does for freshly-launched objects (see
   Features above). Only looked up when elements were actually fetched live -
   skipped while showing fallback data, so it can't attach the wrong
-  satellite's name to the ISS fallback elements.
+  satellite's name to the ISS fallback elements. The field is masked like a
+  password field. Leaving it blank on save keeps the current key - there's
+  a separate checkbox to actually remove it.
 - **Display full-refresh interval** - how often the e-paper redraws, in
   minutes (1-60, default 2). Takes effect immediately, no restart.
+- **Elements/launch-date fetch interval** - how often CelesTrak is polled,
+  in minutes (10-1440, default 1440/24h). Kept at a 10-minute floor to stay
+  well clear of CelesTrak's rate limit even at the most aggressive setting
+  (see "Rate limits" below). Takes effect immediately, no restart.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
   reconnect (WiFi hostnames are set at connection time, not live).
 - **WiFi** - shows the currently-connected network, a dropdown of nearby
@@ -105,20 +126,25 @@ not a fault.
 ### Rate limits
 
 The firmware is intentionally polite to both outside services it talks to -
-elements and the launch date are refetched once a day, plus immediately
-whenever you change the tracked satellite, and never polled continuously.
+elements and the launch date are refetched once a day by default (this is
+the "Elements/launch-date fetch interval" config-page field, adjustable
+10-1440 minutes), plus immediately whenever you change the tracked
+satellite, and never polled continuously.
 
 - **CelesTrak** (orbital elements, launch date): no API key needed, but
   their [usage policy](https://celestrak.org/usage-policy.php) firewalls an
   IP after 50 HTTP error responses (403/404/301/50x) within a 2-hour
   window. Normal use - about one fetch a day, plus the occasional satellite
-  change - stays nowhere near that. If the config page ever shows
-  "HTTP 403", it clears on its own after a while; the device keeps
-  tracking on its last-known (stale) data in the meantime, marked OFFLINE.
+  change - stays nowhere near that. Even at the fetch interval's minimum
+  10-minute setting, that's at most 24 requests/2h (2 requests per fetch,
+  elements + launch date) - still well under the 50-error threshold. If the
+  config page ever shows "HTTP 403", it clears on its own after a while;
+  the device keeps tracking on its last-known (stale) data in the
+  meantime, marked OFFLINE.
 - **n2yo** (optional name lookup): the free tier allows up to 1000
   requests/hour. The firmware makes at most one n2yo call per satellite
   selection/refetch - far under that limit even with frequent manual
-  satellite changes.
+  satellite changes or the fetch interval set to its minimum.
 
 ## Building the hardware
 

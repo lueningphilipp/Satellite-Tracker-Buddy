@@ -9,6 +9,7 @@ that decision - this is now just the spec for firmware's e-paper renderer).
     python sat_display_demo.py            # default NORAD id
     python sat_display_demo.py 25544      # any NORAD id
     python sat_display_demo.py 25544 --speed 60   # 60x time-lapse
+    python sat_display_demo.py 25544 --lat 52.5 --lon 13.4   # + next-pass prediction
 
 Keys:  +/- = time speed   space = real time   q = quit
 """
@@ -158,6 +159,72 @@ def is_day(lat, lon, sun):
             math.cos(math.radians(lat))*math.cos(sl)*math.cos(math.radians(lon)-sn))
     return cosz > 0
 
+# ---------- next-pass prediction ----------
+def elevation_deg(obs_lat, obs_lon, sat_lat, sat_lon, sat_alt):
+    """Topocentric elevation angle (deg) of the satellite as seen from an
+    observer at obs_lat/obs_lon (assumed sea level), spherical-Earth
+    approximation - consistent with Sat.latlon()'s own spherical lat/lon/alt
+    (same RE, no WGS84 correction), so the two stay geometrically consistent
+    with each other even though a real geodetic observer position would be
+    marginally different."""
+    olat, olon = math.radians(obs_lat), math.radians(obs_lon)
+    slat, slon = math.radians(sat_lat), math.radians(sat_lon)
+    obs = (RE*math.cos(olat)*math.cos(olon), RE*math.cos(olat)*math.sin(olon), RE*math.sin(olat))
+    r = RE + sat_alt
+    sat = (r*math.cos(slat)*math.cos(slon), r*math.cos(slat)*math.sin(slon), r*math.sin(slat))
+    d = tuple(sat[i] - obs[i] for i in range(3))
+    # topocentric East-North-Up frame at the observer
+    up = (math.cos(olat)*math.cos(olon), math.cos(olat)*math.sin(olon), math.sin(olat))
+    east = (-math.sin(olon), math.cos(olon), 0.0)
+    north = (-math.sin(olat)*math.cos(olon), -math.sin(olat)*math.sin(olon), math.cos(olat))
+    du = sum(d[i]*up[i] for i in range(3))
+    de = sum(d[i]*east[i] for i in range(3))
+    dn = sum(d[i]*north[i] for i in range(3))
+    return math.degrees(math.atan2(du, math.hypot(de, dn)))
+
+def find_next_pass(sat, obs_lat, obs_lon, start, min_elev=10.0, max_days=3, step_scale=100):
+    """Searches forward from `start` for the next time the satellite rises
+    above min_elev degrees as seen from obs_lat/obs_lon. Returns
+    ('now', start) if it's already above min_elev; ('found', datetime) for
+    the next rise; ('none', None) if no crossing turns up within max_days -
+    which is the "not possible for some orbits" case (a GEO satellite
+    parked over a different longitude, or an inclination that never reaches
+    this latitude at all - if a pass is geometrically possible it recurs
+    within a day or two for anything except a GEO/near-GEO object, so a
+    multi-day bounded search is enough to tell "rare" from "impossible").
+    Coarse step search only (no bisection refinement) - within a minute or
+    so of accuracy, plenty for a "next pass in Xh Ym" display."""
+    step_s = max(30, sat.period * 60 / step_scale)
+    t = start
+    end = start + timedelta(days=max_days)
+
+    def elev_at(tt):
+        p = sat.latlon(tt)
+        return elevation_deg(obs_lat, obs_lon, *p) if p else -90.0
+
+    prev = elev_at(t)
+    if prev >= min_elev:
+        return "now", t
+    t += timedelta(seconds=step_s)
+    while t <= end:
+        e = elev_at(t)
+        if e >= min_elev and prev < min_elev:
+            return "found", t
+        prev = e
+        t += timedelta(seconds=step_s)
+    return "none", None
+
+def format_pass(state, when, now):
+    if state == "now": return "overhead now"
+    if state == "none": return "none in next 3d"
+    delta = when - now
+    days, rem = divmod(int(delta.total_seconds()), 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days: return f"in {days}d {hours}h"
+    if hours: return f"in {hours}h {mins}m"
+    return f"in {mins}m"
+
 # ---------- projection / land helpers ----------
 land_img = pygame.image.load(io.BytesIO(base64.b64decode(MASK_B64)))
 def land_grid(w, h):
@@ -259,6 +326,14 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
             for x in range(0, mw, 6):
                 lat, lon = 90-y/mh*180, x/mw*360-180
                 if not is_day(lat, lon, sun): surf.set_at((x, y), (120,120,120))
+        def land_at_px(x, y):
+            """Looks up s.land (the 360x180 mask, already built at __init__)
+            for the map pixel at (x, y) in the mw x mh map area - reuses the
+            same grid drawMap() itself paints from, just indexed back from
+            pixel space instead of degrees."""
+            mx = int(x / mw * 360) % 360
+            my = max(0, min(179, int(y / mh * 180)))
+            return s.land[my][mx]
         def track(t0, t1, step, dashed):
             pts, t, k = [], t0, 0
             while t <= t1:
@@ -268,7 +343,14 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
             for a, b in zip(pts, pts[1:]):
                 if abs(a[0]-b[0]) > mw/2: continue           # skip dateline wrap
                 if dashed and (k := k+1) % 2: continue
-                pygame.draw.line(surf, (0,0,0), a, b, 3 if not dashed else 1)
+                # White ink over land (drawn dark), black over sea (light
+                # background) - a flat black track used to disappear into
+                # the landmass fill wherever it crossed land. Colored per
+                # segment (by its start point) rather than per pixel - segments
+                # are short enough, and the mask coarse enough, that per-pixel
+                # precision wouldn't look any different.
+                color = (255,255,255) if land_at_px(*a) else (0,0,0)
+                pygame.draw.line(surf, color, a, b, 3 if not dashed else 1)
         track(now - timedelta(minutes=sat.period), now, 30, True)
         track(now, now + timedelta(minutes=sat.period), 30, False)
         p = sat.latlon(now)
@@ -294,6 +376,7 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
                 f"Inclin. {sat.incl:.1f}°    Period {sat.period:.1f} min")
         age = sat.age(now)
         if age: info += f"    In space {age[0]:.0f} d ({age[1]:.1f} yr)"
+        if sat.next_pass_text: info += f"    Next pass: {sat.next_pass_text}"
         surf.blit(small.render(info, True, (0,0,0)), (20, mh+50))
         return surf
 
@@ -303,6 +386,8 @@ def main():
     norad = args[0] if args else "100614"
     speed = 1.0
     if "--speed" in sys.argv: speed = float(sys.argv[sys.argv.index("--speed")+1])
+    obs_lat = float(sys.argv[sys.argv.index("--lat")+1]) if "--lat" in sys.argv else None
+    obs_lon = float(sys.argv[sys.argv.index("--lon")+1]) if "--lon" in sys.argv else None
     fields, online = fetch_omm(norad)
     # Look up by fields["NORAD_CAT_ID"], NOT the requested `norad` - when
     # fetch_omm() fails and falls back to FALLBACK_OMM (the ISS), the object
@@ -319,6 +404,19 @@ def main():
     if not online: print("  (offline - showing stale fallback data)")
     age = sat.age(datetime.now(timezone.utc))
     if age: print(f"  in space {age[0]:.0f} days ({age[1]:.1f} years)")
+
+    # Next pass, if a site location was given. Computed once here (not per
+    # frame) - matches firmware's cadence (on satellite selection), and
+    # avoids the simulated clock's --speed time-lapse racing past the
+    # predicted time within seconds of runtime; a stale prediction during
+    # fast-forward testing is an acceptable simplification for a dev tool
+    # (real firmware has no artificial time acceleration to worry about).
+    sat.next_pass_text = None
+    if obs_lat is not None and obs_lon is not None:
+        now0 = datetime.now(timezone.utc)
+        state, when = find_next_pass(sat, obs_lat, obs_lon, now0)
+        sat.next_pass_text = format_pass(state, when, now0)
+        print(f"  next pass (>=10 deg elevation): {sat.next_pass_text}")
 
     pygame.init(); pygame.display.set_caption("Satellite display demo")
     ep = EPaper()

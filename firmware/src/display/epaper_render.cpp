@@ -56,12 +56,30 @@ static void drawMap(double sunDec, double sunLon) {
     }
 }
 
+// Looks up landAt() (the same 360x180 mask drawMap() paints from) for a
+// map pixel in W x MH space - mirrors the demo's land_at_px().
+static bool landAtPx(int x, int y) {
+    int mx = ((x * LAND_MASK_W) / W) % LAND_MASK_W;
+    if (mx < 0) mx += LAND_MASK_W;
+    int my = (y * LAND_MASK_H) / MH;
+    if (my < 0) my = 0;
+    if (my >= LAND_MASK_H) my = LAND_MASK_H - 1;
+    return landAt(mx, my);
+}
+
 static void drawTrackSegment(int x0, int y0, int x1, int y1, bool thick) {
     if (abs(x1 - x0) > W / 2) return;   // skip dateline wrap, matches demo
-    display.drawLine(x0, y0, x1, y1, GxEPD_BLACK);
+    // White ink over land (drawn black), black over sea (white background) -
+    // ported from the demo's track(): a flat black track used to disappear
+    // into the landmass fill wherever it crossed land. Colored by the
+    // segment's start point, same as the demo - segments are short enough,
+    // and the mask coarse enough, that per-pixel precision wouldn't look
+    // any different.
+    uint16_t color = landAtPx(x0, y0) ? GxEPD_WHITE : GxEPD_BLACK;
+    display.drawLine(x0, y0, x1, y1, color);
     if (thick) {   // approximate the demo's 3px solid future line
-        display.drawLine(x0, y0 + 1, x1, y1 + 1, GxEPD_BLACK);
-        display.drawLine(x0, y0 - 1, x1, y1 - 1, GxEPD_BLACK);
+        display.drawLine(x0, y0 + 1, x1, y1 + 1, color);
+        display.drawLine(x0, y0 - 1, x1, y1 - 1, color);
     }
 }
 
@@ -132,7 +150,8 @@ static void drawRocketIcon(int x, int y) {
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
                    time_t launchDate, bool haveLaunchDate, bool wifiConnected,
-                   const String& configUrl) {
+                   const String& configUrl,
+                   bool haveNextPassInfo, PassState passState, time_t passTime) {
     double sunDec, sunLon;
     subsolar(now, sunDec, sunLon);
 
@@ -327,6 +346,39 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
             printLabelValue(col3X, col3Right, row1Y, "In space", valBuf);
             snprintf(valBuf, sizeof(valBuf), "(%.1f yr)", days / 365.25);
             printRightAligned(col3Right, row2Y, valBuf);   // continuation, no label
+        }
+
+        // Next pass above the configured site (core/pass_predict.h) - a 4th
+        // column in the space between "In space" and the WiFi/QR corner.
+        // Hidden entirely if no site lat/lon is configured, same pattern as
+        // "In space" above. kNone means the search found no crossing within
+        // its window - either genuinely rare, or the orbit's inclination
+        // never reaches this latitude at all (e.g. a low-inclination orbit
+        // seen from a high-latitude site) or (for a GEO/near-GEO object) the
+        // site is simply outside its fixed footprint - "not possible for
+        // some orbits", as expected.
+        if (haveNextPassInfo) {
+            const int col4X = 530, col4Right = 690;
+            if (passState == PassState::kNow) {
+                printLabelValue(col4X, col4Right, row1Y, "Next pass", "Now");
+            } else if (passState == PassState::kNone) {
+                printLabelValue(col4X, col4Right, row1Y, "Next pass", "None");
+            } else {   // kFound
+                long deltaSec = (long)difftime(passTime, now);
+                if (deltaSec < 0) deltaSec = 0;   // clock skew guard, shouldn't happen
+                long days = deltaSec / 86400, hours = (deltaSec % 86400) / 3600, mins = (deltaSec % 3600) / 60;
+                char countdown[16];
+                if (days > 0) snprintf(countdown, sizeof(countdown), "%ldd %ldh", days, hours);
+                else if (hours > 0) snprintf(countdown, sizeof(countdown), "%ldh %ldm", hours, mins);
+                else snprintf(countdown, sizeof(countdown), "%ldm", mins);
+                printLabelValue(col4X, col4Right, row1Y, "Next pass", countdown);
+
+                struct tm passTmv;
+                gmtime_r(&passTime, &passTmv);
+                char clockBuf[16];
+                snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d UTC", passTmv.tm_hour, passTmv.tm_min);
+                printRightAligned(col4Right, row2Y, clockBuf);   // continuation, no label
+            }
         }
     } while (display.nextPage());
     display.hibernate();

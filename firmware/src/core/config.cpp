@@ -16,6 +16,7 @@ void ConfigStore::begin() {
     current.n2yoApiKey = prefs.getString("n2yoKey", "");
     current.hostname   = prefs.getString("hostname", "sattracker");
     current.displayRefreshMinutes = prefs.getInt("refreshMin", 2);
+    current.elementsFetchMinutes  = prefs.getInt("fetchMin", 1440);
     prefs.end();
 }
 
@@ -36,5 +37,6 @@ void ConfigStore::save() {
     prefs.putString("n2yoKey", current.n2yoApiKey);
     prefs.putString("hostname", current.hostname);
     prefs.putInt("refreshMin", current.displayRefreshMinutes);
+    prefs.putInt("fetchMin", current.elementsFetchMinutes);
     prefs.end();
 }
