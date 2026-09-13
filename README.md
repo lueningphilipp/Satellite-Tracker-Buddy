@@ -7,12 +7,6 @@ come from [CelesTrak](https://celestrak.org/); the position is computed
 on-device with SGP4 - no cloud service, no app, just a WiFi-connected panel
 on your desk.
 
-**Keep this file up to date whenever a user-facing feature changes**
-(config page fields, button behavior, setup steps, etc.) - it's the "what
-is this and how do I use it" doc. For the detailed, chronological
-development log (what's been tried, what broke, what's still open) see
-[CLAUDE.md](CLAUDE.md).
-
 ## Features
 
 - **Track anything, not just the ISS** - punch in any NORAD catalog number,
@@ -54,36 +48,13 @@ development log (what's been tried, what broke, what's still open) see
   working, with the specific error (e.g. an HTTP status code) when one
   isn't - no serial monitor needed to see what's wrong.
 
-## Setting up
+## How to use it
 
-### Hardware
+### The config page
 
-- An ESP32 dev board (plain ESP32-WROOM is fine; ESP32-S3 also works. Not
-  ESP8266 - HTTPS + web config + SGP4 is too tight on it).
-- A Waveshare 7.5" V2 800×480 e-paper panel + its ESP32 Driver Board/HAT.
-- USB cable, a WiFi network, and (for setup) a phone or laptop.
-
-### Build and flash
-
-```
-cd firmware
-pio run                     # compile (PlatformIO, not the Arduino IDE)
-pio run -t upload           # flash over USB
-pio device monitor -b 115200   # serial output, for following boot/tracking logs
-```
-
-### First boot
-
-1. With no WiFi network stored yet, the device opens its own WiFi network
-   named **`SatTracker-Setup`**. Join it from a phone - a sign-in page
-   should pop up automatically (if it doesn't, browse to `192.168.4.1`).
-2. Pick your network from the scanned list (or type one in for hidden
-   networks) and enter the password. Save - the device restarts and joins
-   your network.
-3. The serial monitor prints the device's new IP once it's online. Browse
-   to `http://<that ip>/` for the full config page.
-
-### The config page (`http://<device ip>/`)
+Scan the small QR code next to the WiFi icon on the display with your
+phone, or browse to `http://<device ip>/` if you already know it (check
+your router's client list).
 
 A status panel at the top shows WiFi (connected network + signal strength),
 the last elements fetch, launch-date fetch, and n2yo lookup outcomes - "OK"
@@ -91,7 +62,7 @@ or the specific problem (e.g. "HTTP 403"), highlighted so real problems
 stand out from normal/unconfigured states (like "no key configured").
 
 - **NORAD catalog id** - type any number, or click a favourite (ISS,
-  Tiangong, Hubble, NOAA-19). Saving refetches elements immediately and
+  Tiangong, Hubble, Spectrum). Saving refetches elements immediately and
   clears the trail.
 - **Site latitude/longitude** - not yet used by the renderer, reserved for a
   future "distance/pass from here" feature.
@@ -127,9 +98,55 @@ while powering it on - see the warning below). It blinks the onboard LED
 
 ### Display behavior
 
-- Full refresh every 2 minutes by default (configurable, see above) - each
-  refresh takes ~2.6s and visibly flashes, which is normal e-paper
-  behavior, not a fault.
+Full refresh every 2 minutes by default (configurable, see above) - each
+refresh takes ~2.6s and visibly flashes, which is normal e-paper behavior,
+not a fault.
+
+### Rate limits
+
+The firmware is intentionally polite to both outside services it talks to -
+elements and the launch date are refetched once a day, plus immediately
+whenever you change the tracked satellite, and never polled continuously.
+
+- **CelesTrak** (orbital elements, launch date): no API key needed, but
+  their [usage policy](https://celestrak.org/usage-policy.php) firewalls an
+  IP after 50 HTTP error responses (403/404/301/50x) within a 2-hour
+  window. Normal use - about one fetch a day, plus the occasional satellite
+  change - stays nowhere near that. If the config page ever shows
+  "HTTP 403", it clears on its own after a while; the device keeps
+  tracking on its last-known (stale) data in the meantime, marked OFFLINE.
+- **n2yo** (optional name lookup): the free tier allows up to 1000
+  requests/hour. The firmware makes at most one n2yo call per satellite
+  selection/refetch - far under that limit even with frequent manual
+  satellite changes.
+
+## Building the hardware
+
+### What you need
+
+- An ESP32 dev board (plain ESP32-WROOM is fine; ESP32-S3 also works. Not
+  ESP8266 - HTTPS + web config + SGP4 is too tight on it).
+- A Waveshare 7.5" V2 800×480 e-paper panel + its ESP32 Driver Board/HAT.
+- USB cable, a WiFi network, and (for setup) a phone or laptop.
+
+### Build and flash
+
+```
+cd firmware
+pio run                     # compile (PlatformIO, not the Arduino IDE)
+pio run -t upload           # flash over USB
+pio device monitor -b 115200   # serial output, for following boot/tracking logs
+```
+
+### First boot
+
+1. With no WiFi network stored yet, the device opens its own WiFi network
+   named **`SatTracker-Setup`**. Join it from a phone - a sign-in page
+   should pop up automatically (if it doesn't, browse to `192.168.4.1`).
+2. Pick your network from the scanned list (or type one in for hidden
+   networks) and enter the password. Save - the device restarts and joins
+   your network.
+3. From here on, see "How to use it" above.
 
 ## Known limitations / not built yet
 
@@ -138,11 +155,10 @@ while powering it on - see the warning below). It blinks the onboard LED
 - No deep sleep / battery power path - the device expects to be USB-powered.
 - No frame/CAD yet.
 - No MQTT control.
-- CelesTrak's `gp.php` endpoint enforces a firewall after 50 HTTP error
-  responses in a 2-hour window (see celestrak.org/usage-policy.php) - if
-  elements stop refreshing, the device falls back to stale cached data and
-  shows OFFLINE rather than crashing; this generally clears on its own
-  after a while.
+- No firmware auto-update (OTA) yet - see CLAUDE.md for the current
+  thinking on this.
+- CelesTrak rate-limiting can occasionally show OFFLINE - see Rate limits
+  above.
 
 ---
 
@@ -217,11 +233,16 @@ loop  → every 1s:  SGP4(now) → lat/lon → push to trail ring buffer → ren
 
 ### Conventions
 
-See [CLAUDE.md](CLAUDE.md) for the full list, notably: keep the demo and
-firmware renderers visually identical (change a rendering rule in the demo
-first, check it there, then port it); all times UTC internally; no blocking
-network calls inside the render loop (fetch in setup or a scheduled task -
-and never from inside an AsyncWebServer request handler, which runs on the
-`async_tcp` task and will crash the device via watchdog if blocked for more
-than a couple seconds); commit small; don't add dependencies without a
-comment saying why.
+- Keep this file up to date whenever a user-facing feature changes (config
+  page fields, button behavior, setup steps, etc.) - it's the "what is this
+  and how do I use it" doc, [CLAUDE.md](CLAUDE.md) is the working/dev log.
+- Keep the demo and firmware renderers visually identical (change a
+  rendering rule in the demo first, check it there, then port it).
+- All times UTC internally. Only convert for display.
+- No blocking network calls inside the render loop (fetch in setup or a
+  scheduled task) - and never from inside an AsyncWebServer request
+  handler, which runs on the `async_tcp` task and will crash the device via
+  watchdog if blocked for more than a couple seconds.
+- Commit small. Don't add dependencies without a comment saying why.
+
+See [CLAUDE.md](CLAUDE.md) for the full chronological development log.
