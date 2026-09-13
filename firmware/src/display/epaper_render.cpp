@@ -7,6 +7,7 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
+#include <qrcode.h>   // ricmoo/QRCode - draws the "scan to open config page" QR in epaperRender()
 #include <math.h>
 #include <time.h>
 #include <stdio.h>
@@ -130,7 +131,8 @@ static void drawRocketIcon(int x, int y) {
 
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate, bool wifiConnected) {
+                   time_t launchDate, bool haveLaunchDate, bool wifiConnected,
+                   const String& configUrl) {
     double sunDec, sunLon;
     subsolar(now, sunDec, sunLon);
 
@@ -205,14 +207,50 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         // separate from the ONLINE/OFFLINE dot above (see epaperRender()'s
         // header comment for why they can disagree). Same signal-bars
         // shape as the demo: filled = connected, outline-only = not.
+        const int wifiBars = 4, wifiBarW = 5, wifiBarGap = 3;
+        const int wifiBaseX = W - 20, wifiBaseY = H - 10;
         {
-            const int bars = 4, barW = 5, barGap = 3;
-            int baseX = W - 20, baseY = H - 10;
-            for (int i = 0; i < bars; i++) {
+            for (int i = 0; i < wifiBars; i++) {
                 int barH = 5 + i * 4;
-                int bx2 = baseX - (bars - i) * (barW + barGap);
-                if (wifiConnected) display.fillRect(bx2, baseY - barH, barW, barH, GxEPD_BLACK);
-                else                display.drawRect(bx2, baseY - barH, barW, barH, GxEPD_BLACK);
+                int bx2 = wifiBaseX - (wifiBars - i) * (wifiBarW + wifiBarGap);
+                if (wifiConnected) display.fillRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
+                else                display.drawRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
+            }
+        }
+
+        // Small "scan to open the config page" QR code, just left of the
+        // WiFi icon, sharing its baseline. Only shown while actually
+        // connected - configUrl is the STA IP, which is unreachable anyway
+        // if the radio is down, so a QR to nowhere would be misleading.
+        //
+        // Size/placement were picked via an on-device scan test (see
+        // CLAUDE.md's TODO): a set of candidate sizes was rendered and
+        // physically scanned with a phone. The smallest one - 25x25
+        // physical pixels, i.e. 1 device pixel per QR module - was the one
+        // that worked, well below what naive module-count math would
+        // suggest was needed; real phone cameras handle a lot more than
+        // that math assumes. Version 2 (25x25 modules) because version 1's
+        // byte-mode capacity (17 bytes at LOW ECC) is too small for a full
+        // "http://<ip>/" string (~22 bytes); version 2's 32 bytes fits.
+        if (wifiConnected) {
+            const uint8_t qrVersion = 2;
+            const int qrPxPerModule = 1;
+            QRCode qrcode;
+            uint8_t qrcodeData[qrcode_getBufferSize(qrVersion)];
+            qrcode_initText(&qrcode, qrcodeData, qrVersion, ECC_LOW, configUrl.c_str());
+
+            int codeSize = qrPxPerModule * qrcode.size;
+            int wifiIconLeft = wifiBaseX - wifiBars * (wifiBarW + wifiBarGap);
+            int qrRight = wifiIconLeft - 10;   // gap between the QR and the WiFi icon
+            int x0 = qrRight - codeSize, y0 = wifiBaseY - codeSize;   // shares the WiFi icon's baseline
+
+            for (uint8_t my = 0; my < qrcode.size; my++) {
+                for (uint8_t mx = 0; mx < qrcode.size; mx++) {
+                    if (qrcode_getModule(&qrcode, mx, my)) {
+                        display.fillRect(x0 + mx * qrPxPerModule, y0 + my * qrPxPerModule,
+                                          qrPxPerModule, qrPxPerModule, GxEPD_BLACK);
+                    }
+                }
             }
         }
 

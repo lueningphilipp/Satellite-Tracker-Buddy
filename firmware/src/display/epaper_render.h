@@ -18,6 +18,12 @@ void epaperInit();
 // separate from `online`, which reflects whether the last CelesTrak fetch
 // succeeded, not whether the radio is associated at all (the two can
 // disagree - e.g. WiFi fine but CelesTrak itself rate-limiting).
+// configUrl: the live config-page address (e.g. "http://192.168.1.42/"),
+// drawn as a small QR code just left of the WiFi icon - see CLAUDE.md's
+// TODO for the on-device scan test that picked its size (25x25 physical
+// pixels, 1px/module - much smaller than the module-count math alone
+// suggested, but that's what a real phone camera actually resolved).
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate, bool wifiConnected);
+                   time_t launchDate, bool haveLaunchDate, bool wifiConnected,
+                   const String& configUrl);

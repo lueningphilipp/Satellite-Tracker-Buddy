@@ -34,6 +34,9 @@ development log (what's been tried, what broke, what's still open) see
   indicator near the title (that one reflects whether the *last CelesTrak
   fetch* succeeded - the two can disagree, e.g. WiFi's fine but CelesTrak is
   temporarily rate-limiting).
+- **Scan to open the config page** - a small QR code sits right next to the
+  WiFi icon while connected. No need to know the device's IP or dig through
+  your router's client list - just scan it with a phone camera.
 - **A little easter egg**: if the tracked object's name is exactly
   **SPECTRUM** (Isar Aerospace's rocket, whose second stage flies a single
   engine), the "you are here" marker becomes a tiny rocket silhouette

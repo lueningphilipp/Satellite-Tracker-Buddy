@@ -216,7 +216,8 @@ void loop() {
         Serial.println("Rendering e-paper...");
         epaperRender(satTrack, lastElements, trail, time(nullptr), online,
                      haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
-                     WiFi.status() == WL_CONNECTED);
+                     WiFi.status() == WL_CONNECTED,
+                     "http://" + WiFi.localIP().toString() + "/");
         Serial.println("Render done");
     }
 
