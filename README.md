@@ -72,15 +72,25 @@ the last elements fetch, launch-date fetch, and n2yo lookup outcomes - "OK"
 or the specific problem (e.g. "HTTP 403"), highlighted so real problems
 stand out from normal/unconfigured states (like "no key configured").
 
+Saving refetches/recomputes whatever changed (satellite, site location,
+n2yo key) immediately, and the display redraws right away too rather than
+waiting for its next scheduled refresh - so you see the result of a save
+within a few seconds, not up to `displayRefreshMinutes` later. WiFi and
+hostname changes are the exception: those restart the device to take
+effect, same as before.
+
 - **NORAD catalog id** - type any number, or click a favourite (ISS,
   Tiangong, Hubble, Spectrum). Saving refetches elements immediately and
   clears the trail.
 - **Site latitude/longitude** - optional; enables the "Next pass" prediction
   on the display (see Features above). Leave both at 0 to disable it. A
-  "Use my location" button fills these in from your browser's geolocation -
-  note this may not work on every browser, since it only allows this over
-  HTTPS on many of them, and the device only serves plain HTTP; type the
-  coordinates in manually if it doesn't.
+  "Use my location" button fills these in from your browser's precise
+  geolocation where that's allowed (many browsers block it on this
+  device's plain-HTTP address); it automatically falls back to an
+  approximate, city-level location looked up by the device itself from
+  its network connection if the precise version isn't available, so the
+  button works either way without needing a browser workaround. You can
+  still type coordinates in manually instead.
 - **n2yo API key** - optional, free-tier; resolves the satellite's real name
   sooner than CelesTrak's own catalog does for freshly-launched objects (see
   Features above). Only looked up when elements were actually fetched live -

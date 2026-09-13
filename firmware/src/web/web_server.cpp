@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "../core/wifi_setup.h"
 #include "../core/status.h"
+#include "../core/geoip.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
@@ -102,20 +103,37 @@ function pick(id){document.getElementById('norad').value=id;}
 function useMyLocation(){
   var status = document.getElementById('geoStatus');
   if (!navigator.geolocation) {
-    status.textContent = 'Geolocation not supported by this browser.';
+    geoIpFallback('Geolocation not supported by this browser');
     return;
   }
   status.textContent = 'Locating...';
   navigator.geolocation.getCurrentPosition(function(pos){
     document.getElementById('lat').value = pos.coords.latitude.toFixed(4);
     document.getElementById('lon').value = pos.coords.longitude.toFixed(4);
-    status.textContent = 'Filled in from your browser - remember to Save below.';
+    status.textContent = 'Filled in from your browser (precise) - remember to Save below.';
   }, function(err){
     // Most browsers only allow this API over HTTPS (or localhost) - this
-    // device only serves plain HTTP, so it may simply be blocked outright
-    // rather than prompting, depending on the browser.
-    status.textContent = 'Could not get your location (' + err.message +
-      '). Some browsers only allow this over HTTPS - type the coordinates in manually instead.';
+    // device only serves plain HTTP, so it's often blocked outright rather
+    // than prompting. Fall back to a server-side, IP-based approximation
+    // instead of just giving up - see core/geoip.h for why that sidesteps
+    // the restriction entirely (it's a browser JS API rule, not a
+    // networking one, so a plain device-to-service HTTP call is unaffected).
+    geoIpFallback('Could not get your precise location (' + err.message + ')');
+  });
+}
+function geoIpFallback(reason){
+  var status = document.getElementById('geoStatus');
+  status.textContent = reason + ' - trying an approximate location from your network instead...';
+  fetch('/geoip').then(function(r){ return r.json(); }).then(function(data){
+    if (data.ok) {
+      document.getElementById('lat').value = data.lat.toFixed(4);
+      document.getElementById('lon').value = data.lon.toFixed(4);
+      status.textContent = 'Approximate location filled in (city-level accuracy, not exact) - remember to Save below.';
+    } else {
+      status.textContent = reason + ' - and the approximate fallback failed too (' + data.error + '). Type the coordinates in manually.';
+    }
+  }).catch(function(){
+    status.textContent = reason + ' - and the approximate fallback failed too. Type the coordinates in manually.';
   });
 }
 </script>
@@ -179,6 +197,25 @@ static String renderPage(const DeviceConfig& cfg) {
 void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSaved) {
     server.on("/", HTTP_GET, [&store](AsyncWebServerRequest* req) {
         req->send(200, "text/html", renderPage(store.current));
+    });
+
+    // Server-side fallback for the "Use my location" button - see
+    // core/geoip.h for why (many browsers block the Geolocation JS API on
+    // this device's plain-HTTP origin). A blocking HTTPClient GET, same as
+    // the elements/launch-date/n2yo fetches already called safely from
+    // request handlers elsewhere on this page - a plain HTTP GET isn't the
+    // class of call (WiFi.scanNetworks(), a tight CPU loop) that's actually
+    // unsafe there, see CLAUDE.md's TODO.
+    server.on("/geoip", HTTP_GET, [](AsyncWebServerRequest* req) {
+        float lat, lon;
+        String err;
+        if (fetchGeoIpLocation(lat, lon, &err)) {
+            String json = "{\"ok\":true,\"lat\":" + String(lat, 4) + ",\"lon\":" + String(lon, 4) + "}";
+            req->send(200, "application/json", json);
+        } else {
+            String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
+            req->send(200, "application/json", json);
+        }
     });
 
     // REST GET, per CLAUDE.md's "REST: GET/POST /config" - handy for the

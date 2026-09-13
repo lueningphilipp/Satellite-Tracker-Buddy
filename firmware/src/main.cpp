@@ -29,6 +29,23 @@ bool online = true;
 time_t launchDate = 0;
 bool haveLaunchDate = false;
 
+// Loop timing state, hoisted up here (rather than declared just before
+// loop(), where they used to live) so refetchAndInit()/onConfigSaved()
+// above loop() in the file can reference lastRenderMs/forceRenderNow too.
+static unsigned long lastSampleMs = 0;
+static unsigned long lastRenderMs = 0;
+static unsigned long lastRefetchMs = 0;
+static unsigned long lastWifiScanMs = 0;
+static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
+// Set by onConfigSaved() (a config-page save) to force the next loop()
+// iteration to redraw immediately, instead of waiting for the next
+// scheduled renderIntervalMs tick (up to displayRefreshMinutes away,
+// 2 min by default) - a save is something the user is actively watching
+// for, unlike the automatic scheduled refetch, which doesn't force this
+// (no reason to force an extra visible flash for a quiet background
+// refresh). Same reasoning/pattern as passRecomputeNeeded below.
+static bool forceRenderNow = false;
+
 // Next-pass prediction (see core/pass_predict.h). haveNextPassInfo gates
 // whether a site location is configured at all (siteLat/siteLon both 0.0
 // is treated as "not set" - nobody's real site is exactly at 0N,0E, the
@@ -180,6 +197,23 @@ static void refetchAndInit() {
     passRecomputeNeeded = true;
 }
 
+// The config page's onConfigSaved callback - NOT the same as calling
+// refetchAndInit() directly (that's still what the scheduled/automatic
+// refetch in loop() below uses). A save is something the user is actively
+// watching for a result from - forces the very next loop() iteration to
+// redraw the panel immediately (whatever the outcome - new satellite, new
+// OFFLINE status if the fetch failed, etc.) instead of waiting up to
+// displayRefreshMinutes for the next scheduled tick. Setting a flag here
+// rather than calling epaperRender() directly for the same reason
+// findNextPass() moved off this path earlier - e-paper rendering does
+// enough tight-loop CPU work (the land-mask nested loops etc.) that
+// running it on the async_tcp task risks the exact same watchdog crash
+// already hit twice this session.
+static void onConfigSaved() {
+    refetchAndInit();
+    forceRenderNow = true;
+}
+
 void setup() {
     Serial.begin(115200);
     delay(300);
@@ -217,15 +251,9 @@ void setup() {
     // why this can't be done live inside the page's request handler.
     wifiSetup.refreshCache();
 
-    configWebServer.begin(config, refetchAndInit);
+    configWebServer.begin(config, onConfigSaved);
     Serial.printf("Config page: http://%s/\n", WiFi.localIP().toString().c_str());
 }
-
-static unsigned long lastSampleMs = 0;
-static unsigned long lastRenderMs = 0;
-static unsigned long lastRefetchMs = 0;
-static unsigned long lastWifiScanMs = 0;
-static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 
 void loop() {
     unsigned long nowMs = millis();
@@ -315,9 +343,12 @@ void loop() {
     // Read live from config each time (cheap) rather than caching, so a
     // refresh-rate change from the config page takes effect on the very
     // next check - no restart needed, unlike WiFi/hostname changes.
+    // forceRenderNow (set by onConfigSaved() above) makes a config-page
+    // save redraw immediately instead of waiting for this interval.
     unsigned long renderIntervalMs = (unsigned long)config.current.displayRefreshMinutes * 60UL * 1000UL;
-    if (nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
+    if (forceRenderNow || nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
         lastRenderMs = nowMs;
+        forceRenderNow = false;
         Serial.println("Rendering e-paper...");
         epaperRender(satTrack, lastElements, trail, time(nullptr), online,
                      haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
