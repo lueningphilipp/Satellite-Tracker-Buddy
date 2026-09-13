@@ -16,7 +16,7 @@ development log (what's been tried, what broke, what's still open) see
 ## Features
 
 - **Track anything, not just the ISS** - punch in any NORAD catalog number,
-  or pick from a short list of favourites (ISS, Tiangong, Hubble, NOAA-19).
+  or pick from a short list of favourites (ISS, Tiangong, Hubble, Spectrum).
 - **Live ground track** - past track dashed, future track solid, both
   scaled to the satellite's actual orbital period so a slow GEO/Molniya
   orbit doesn't fill the trail with one lap's worth of samples in a few

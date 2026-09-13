@@ -170,14 +170,29 @@ def proj(lat, lon, w, h):
 def draw_rocket_icon(surf, x, y):
     """Easter egg for OBJECT_NAME == "SPECTRUM" (Isar Aerospace's Spectrum
     rocket, whose second stage flies a single Aquila engine) - mark it with
-    a tiny rocket silhouette (nose cone + body + one engine nozzle) instead
-    of the generic reticle. Same halo treatment as the reticle so it stays
-    legible over map/track ink, and stays within the reticle's ~16px radius
-    footprint so the two are interchangeable in the layout."""
+    a tiny rocket silhouette instead of the generic reticle. Same halo
+    treatment as the reticle so it stays legible over map/track ink, and
+    stays within the reticle's ~16px radius footprint so the two are
+    interchangeable in the layout.
+
+    v2: the first version (a squat box + two small triangles) read as a
+    blob, not a rocket - this one is a slim tapered body with a sharp nose,
+    a pair of splayed fins at the base, and a single engine nozzle, which
+    is the actual recognizable silhouette."""
     pygame.draw.circle(surf, (250,250,250), (x, y), 16)
-    pygame.draw.rect(surf, (0,0,0), (x-4, y-6, 8, 12))                    # body
-    pygame.draw.polygon(surf, (0,0,0), [(x-4,y-6), (x+4,y-6), (x,y-13)])  # nose cone
-    pygame.draw.polygon(surf, (0,0,0), [(x-3,y+6), (x+3,y+6), (x,y+12)])  # single engine nozzle
+    pygame.draw.rect(surf, (0,0,0), (x-3, y-8, 6, 14))                      # slim body
+    # Nose base is narrower than the body (4px vs 6px) and overlaps 1px into
+    # it, rather than a same-width triangle exactly abutting the rect -
+    # pygame.draw.polygon's flat-base rasterization is inconsistent by ~1px
+    # right at a shared edge row (moved when the seam row did, so it's the
+    # algorithm, not a coincidence - found by rendering at native size and
+    # diffing rows). Keeping the triangle's base strictly narrower than the
+    # rect guarantees any such rounding slop lands inside the already-black
+    # body instead of poking out past its silhouette.
+    pygame.draw.polygon(surf, (0,0,0), [(x-2,y-7), (x+2,y-7), (x,y-14)])    # sharp nose cone
+    pygame.draw.polygon(surf, (0,0,0), [(x-3,y+2), (x-3,y+6), (x-7,y+8)])   # left fin, splayed out
+    pygame.draw.polygon(surf, (0,0,0), [(x+3,y+2), (x+3,y+6), (x+7,y+8)])   # right fin, splayed out
+    pygame.draw.polygon(surf, (0,0,0), [(x-2,y+6), (x+2,y+6), (x,y+11)])    # single engine nozzle, between the fins
 
 # ---------- the e-paper display ----------
 class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
@@ -276,7 +291,7 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
         big = pygame.font.SysFont("dejavuserif", 30, bold=True); small = pygame.font.SysFont("dejavusans", 20)
         surf.blit(big.render(f"{sat.name}  ({sat.orbit_class})", True, (0,0,0)), (20, mh+12))
         info = (f"Apogee {sat.apogee:.0f} km    Perigee {sat.perigee:.0f} km    "
-                f"Incl {sat.incl:.1f}°    Period {sat.period:.1f} min")
+                f"Inclin. {sat.incl:.1f}°    Period {sat.period:.1f} min")
         age = sat.age(now)
         if age: info += f"    In space {age[0]:.0f} d ({age[1]:.1f} yr)"
         surf.blit(small.render(info, True, (0,0,0)), (20, mh+50))

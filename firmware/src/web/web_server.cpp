@@ -17,7 +17,7 @@ static const Favourite FAVOURITES[] = {
     {"ISS", "25544"},
     {"Tiangong", "48274"},
     {"Hubble", "20580"},
-    {"NOAA-19", "33591"},
+    {"Spectrum", "100614"},   // Isar Aerospace's rocket - see epaper_render's easter egg
 };
 
 static const char PAGE_TEMPLATE[] PROGMEM = R"HTML(

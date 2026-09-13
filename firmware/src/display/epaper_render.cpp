@@ -115,13 +115,17 @@ static void drawReticle(int x, int y) {
 
 // Easter egg for OBJECT_NAME == "SPECTRUM" (Isar Aerospace's Spectrum
 // rocket, whose second stage flies a single Aquila engine) - mark it with a
-// tiny rocket silhouette (nose cone + body + one engine nozzle) instead of
-// the generic reticle. Ported as-is from the demo's draw_rocket_icon().
+// tiny rocket silhouette instead of the generic reticle. Ported as-is from
+// the demo's draw_rocket_icon() v2 (slim tapered body, sharp nose, splayed
+// fins, single engine nozzle - the original squat-box version read as a
+// blob, not a rocket).
 static void drawRocketIcon(int x, int y) {
     display.fillCircle(x, y, 16, GxEPD_WHITE);
-    display.fillRect(x - 4, y - 6, 8, 12, GxEPD_BLACK);                          // body
-    display.fillTriangle(x - 4, y - 6, x + 4, y - 6, x, y - 13, GxEPD_BLACK);     // nose cone
-    display.fillTriangle(x - 3, y + 6, x + 3, y + 6, x, y + 12, GxEPD_BLACK);     // single engine nozzle
+    display.fillRect(x - 3, y - 8, 6, 14, GxEPD_BLACK);                           // slim body
+    display.fillTriangle(x - 2, y - 7, x + 2, y - 7, x, y - 14, GxEPD_BLACK);     // sharp nose cone
+    display.fillTriangle(x - 3, y + 2, x - 3, y + 6, x - 7, y + 8, GxEPD_BLACK);  // left fin, splayed out
+    display.fillTriangle(x + 3, y + 2, x + 3, y + 6, x + 7, y + 8, GxEPD_BLACK);  // right fin, splayed out
+    display.fillTriangle(x - 2, y + 6, x + 2, y + 6, x, y + 11, GxEPD_BLACK);     // single engine nozzle, between the fins
 }
 
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
@@ -228,11 +232,21 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
             display.setFont(&FreeSansBold9pt7b);
             display.setCursor(labelX, y);
             display.print(lbl);
+            int16_t lbx, lby; uint16_t lbw, lbh;
+            display.getTextBounds(lbl, 0, 0, &lbx, &lby, &lbw, &lbh);
+            int labelRight = labelX + (int)lbw;
 
             display.setFont(&FreeSans9pt7b);
             int16_t tbx, tby; uint16_t tbw, tbh;
             display.getTextBounds(val, 0, 0, &tbx, &tby, &tbw, &tbh);
-            display.setCursor(valueRightEdge - (int)tbw, y);
+            // Right-align to the column edge, but never closer to the label
+            // than minGap - a plain right-align let a 5-digit value (e.g.
+            // "12345 d" for time-in-space, or a GEO's "35786 km"/"1436.0
+            // min") butt straight up against, or overlap, its own label.
+            const int minGap = 14;
+            int valueX = valueRightEdge - (int)tbw;
+            if (valueX < labelRight + minGap) valueX = labelRight + minGap;
+            display.setCursor(valueX, y);
             display.print(val);
         };
         auto printRightAligned = [&](int rightEdge, int y, const char* text) {
@@ -241,12 +255,21 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
             display.setCursor(rightEdge - (int)tbw, y);
             display.print(text);
         };
-        // Narrower columns than before (was 180px wide, leaving a big gap
-        // between a short label like "Apogee" and its right-aligned value) -
-        // tightened by about one tab-width per column.
-        const int col1X = 20, col1Right = 150;
-        const int col2X = 170, col2Right = 300;
-        const int col3X = 320, col3Right = 450;
+        // Widened from 130px columns (20-150/170-300/320-450) - a 5-digit
+        // time-in-space value ("12345 d") or a GEO's wide numbers ("35786
+        // km", "1436.0 min") were butting against/overlapping their own
+        // label at that width. All three columns are the same 150px width -
+        // an earlier version made column 3 much wider than the others to
+        // "solve" this, but that just moved the problem: a short, common
+        // value ("8 d") right-aligned inside an oversized column left a
+        // huge, inconsistent gap after its label, compared to columns
+        // 1/2's tighter, matching gaps (seen on the real panel). Equal
+        // widths plus the minGap floor in printLabelValue() above handle
+        // both the common short-value case and the rare wide-value case
+        // without that inconsistency.
+        const int col1X = 20, col1Right = 170;
+        const int col2X = 190, col2Right = 340;
+        const int col3X = 360, col3Right = 510;
         const int row1Y = MH + 52, row2Y = MH + 72;
 
         char valBuf[24];
@@ -256,7 +279,7 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         printLabelValue(col1X, col1Right, row2Y, "Perigee", valBuf);
 
         snprintf(valBuf, sizeof(valBuf), "%.1f deg", el.inclinationDeg);
-        printLabelValue(col2X, col2Right, row1Y, "Incl", valBuf);
+        printLabelValue(col2X, col2Right, row1Y, "Inclin.", valBuf);
         snprintf(valBuf, sizeof(valBuf), "%.1f min", track.periodMin());
         printLabelValue(col2X, col2Right, row2Y, "Period", valBuf);
 
