@@ -5,6 +5,7 @@
 #include "core/wifi_setup.h"
 #include "core/elements.h"
 #include "core/status.h"
+#include "core/request_tracker.h"
 #include "core/sgp4_track.h"
 #include "core/pass_predict.h"
 #include "web/web_server.h"
@@ -222,6 +223,7 @@ void setup() {
     epaperInit();
 
     config.begin();
+    celestrakRequests.begin();
 
     pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
     pinMode(STATUS_LED_PIN, OUTPUT);

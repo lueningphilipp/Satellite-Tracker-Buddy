@@ -1,4 +1,5 @@
 #include "elements.h"
+#include "request_tracker.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <stdio.h>   // sscanf
@@ -57,6 +58,7 @@ bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) 
     }
 
     int code = http.GET();
+    celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
     if (code != HTTP_CODE_OK) {
         Serial.printf("elements fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
@@ -122,6 +124,7 @@ bool fetchLaunchDate(const String& noradId, time_t& out, String* errOut) {
     }
 
     int code = http.GET();
+    celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
     if (code != HTTP_CODE_OK) {
         Serial.printf("launch date fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
