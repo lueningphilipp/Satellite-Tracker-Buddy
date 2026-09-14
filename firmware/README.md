@@ -1,16 +1,12 @@
 # firmware/
 
 PlatformIO project for the ESP32, e-paper build only (see CLAUDE.md).
-**Next Steps #1-#3 are all wired up and running on real hardware**: WiFi
-captive portal, NVS config, OMM/CSV element fetch, SGP4, config web page, and
-the e-paper renderer (map, land, night shading, track, reticle, name/orbit-
-class, apogee/perigee/incl/period, time-in-space, refresh-time/online
-status). See CLAUDE.md's TODO for the detailed, chronological log of the
-renderer's layout iterations (several rounds - rotation, text overflow,
-column layout, spacing) and for a known issue at the end of the latest
-session: CelesTrak's `gp.php` endpoint returning 403 (not a code bug - check
-CLAUDE.md's TODO for how to verify whether it's cleared before assuming
-otherwise).
+WiFi captive portal (+ auto-reconnect), NVS config, OMM/CSV element fetch,
+SGP4, the config web page, and the e-paper renderer (map, land, night
+shading, track, reticle, name/orbit-class, apogee/perigee/incl/period,
+time-in-space, next-pass prediction, firmware version) are all wired up and
+running on real hardware. See CLAUDE.md's Changelog for the detailed,
+chronological log of everything built since the initial bring-up below.
 
 ## Status: bring-up done, core loop verified working on real hardware
 
@@ -49,7 +45,9 @@ against the demo to within a few km" requirement):
   plus WGS72 vs WGS84 gravitational-constant differences between the two
   SGP4 ports. Negligible for a ground-track display either way.
 
-Remaining known things to double check as work continues:
+Remaining known things to double check (kept from the original bring-up -
+see CLAUDE.md's TODO for the full current list, this is not necessarily
+still exhaustive):
 
 - `lib_deps` in `platformio.ini` uses `ESP32Async/...` for ESPAsyncWebServer
   and AsyncTCP - resolved fine as of this build, but that ecosystem's library
@@ -59,11 +57,10 @@ Remaining known things to double check as work continues:
   CA bundle embedded) - acceptable for a read-only hobby fetch, but a
   deliberate simplification worth knowing about.
 - The config page's favourite buttons specifically (as opposed to typing a
-  NORAD id manually, which is verified) haven't been clicked through yet.
-  Captive portal + WiFi join + config-page manual NORAD change are all
-  verified working.
-- Site lat/lon and the n2yo key fields haven't been checked for actually
-  surviving a reboot (NVS persistence) - only NORAD id has been.
+  NORAD id manually, which is verified) still haven't been clicked through.
+- The n2yo key field specifically hasn't been checked for surviving a reboot
+  (NVS persistence) - site lat/lon and NORAD id have been, repeatedly, in
+  normal use since this was originally written.
 
 ## Build / flash
 
@@ -82,8 +79,8 @@ pio device monitor -b 115200   # serial output
    SSID/password, save. Device restarts and joins that network.
 2. Once online, the serial monitor prints its IP. Browse to `http://<that ip>/`
    for the full config page: NORAD id (plus favourite buttons - ISS, Tiangong,
-   Hubble, NOAA-19), site lat/lon, and an optional n2yo API key field (stored,
-   not used yet - name resolution isn't wired into firmware yet either).
+   Hubble, Spectrum), site lat/lon, and an optional n2yo API key field (used
+   for best-effort real-name resolution on freshly-launched objects).
 3. Saving triggers an immediate elements refetch, logged to serial along with
    apogee/perigee/period, then lat/lon once a second.
 

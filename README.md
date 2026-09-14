@@ -58,6 +58,9 @@ on your desk.
 - **Configurable elements-fetch interval** (see the config page, below) -
   how often CelesTrak is re-polled for orbital data, kept at a safe minimum
   to respect their rate limits (see "Rate limits" below).
+- **Firmware version on the config page** - the status panel shows exactly
+  which build is running (derived from the git tag at compile time), so you
+  can tell at a glance whether a device is up to date.
 
 ## How to use it
 
@@ -199,6 +202,19 @@ pio device monitor -b 115200   # serial output, for following boot/tracking logs
   thinking on this.
 - CelesTrak rate-limiting can occasionally show OFFLINE - see Rate limits
   above.
+
+## Disclaimer
+
+This is a hobby project, not a certified kit. Building and using it -
+wiring the board, flashing firmware, powering it from USB, 3D-printing and
+assembling a frame - is at your own risk. Nothing here is liable for any
+damage to your hardware, property, or person that results from building or
+using it. See [LICENSE](LICENSE) for the software itself, which is provided
+as-is with no warranty.
+
+## License
+
+[MIT](LICENSE).
 
 ---
 

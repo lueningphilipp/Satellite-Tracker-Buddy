@@ -1,4 +1,13 @@
 # Local secrets - never commit API keys. Mirrors what the firmware will
 # eventually store in NVS (set once via the WiFi config page).
 demo/secrets.local.json
-firmware/.pio/build
+
+# PlatformIO's whole build/dependency cache - regenerated from platformio.ini's
+# lib_deps by any `pio run`, none of it is this project's own code. Previously
+# only firmware/.pio/build was excluded here, which left ~830 vendored
+# third-party library files (firmware/.pio/libdeps) tracked by mistake.
+firmware/.pio/
+
+# Python bytecode cache (demo/) - was tracked by mistake for the same reason.
+__pycache__/
+*.pyc
