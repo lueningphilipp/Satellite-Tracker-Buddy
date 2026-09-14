@@ -3,6 +3,7 @@
 #include "../core/status.h"
 #include "../core/geoip.h"
 #include "../core/request_tracker.h"
+#include "../core/version.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
@@ -38,6 +39,7 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 </style></head><body>
 <h2>Satellite Tracker</h2>
 <div class="status">
+  <b>Firmware version:</b> %FWVERSION%<br>
   <b>WiFi:</b> %WIFISTATUS%<br>
   <b>Elements fetch:</b> %ELEMENTSSTATUS%<br>
   <b>Launch date fetch:</b> %LAUNCHSTATUS%<br>
@@ -169,6 +171,9 @@ static String statusSpan(const String& status) {
 
 static String renderPage(const DeviceConfig& cfg) {
     String page = PAGE_TEMPLATE;
+    // FW_VERSION comes from the git tag at build time, not a stored/config
+    // value - see core/version.h and CLAUDE.md's "OTA + versioning plan".
+    page.replace("%FWVERSION%", FW_VERSION);
     page.replace("%NORAD%", cfg.noradId);
     page.replace("%FAVBUTTONS%", buildFavButtons());
     page.replace("%LAT%", String(cfg.siteLat, 4));
@@ -234,6 +239,7 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
     // scraping HTML.
     server.on("/config", HTTP_GET, [&store](AsyncWebServerRequest* req) {
         String json = "{";
+        json += "\"fwVersion\":\"" + String(FW_VERSION) + "\",";
         json += "\"norad\":\"" + store.current.noradId + "\",";
         json += "\"lat\":" + String(store.current.siteLat, 4) + ",";
         json += "\"lon\":" + String(store.current.siteLon, 4) + ",";

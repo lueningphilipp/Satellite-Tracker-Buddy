@@ -8,6 +8,7 @@
 #include "core/request_tracker.h"
 #include "core/sgp4_track.h"
 #include "core/pass_predict.h"
+#include "core/version.h"
 #include "web/web_server.h"
 #include "display/epaper_render.h"
 #include "display/trail_buffer.h"
@@ -38,6 +39,17 @@ static unsigned long lastRenderMs = 0;
 static unsigned long lastRefetchMs = 0;
 static unsigned long lastWifiScanMs = 0;
 static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
+// WiFi.begin() is only ever called from setup() and the captive-portal flow
+// - nothing reconnects after that. Confirmed on real hardware: a WiFi drop
+// (router reboot, signal loss, whatever) left the device silently offline
+// forever, reachable neither for the config page nor element fetches, while
+// SGP4 propagation kept running fine in the background (no network
+// dependency there) - only a manual power-cycle brought it back. Checked
+// periodically from loop() instead (see below), same "blocking loop() for a
+// few seconds is fine, never do this from a request handler" class as the
+// WiFi-scan refresh above.
+static unsigned long lastWifiCheckMs = 0;
+static const unsigned long WIFI_CHECK_INTERVAL_MS = 30UL * 1000UL;
 // Set by onConfigSaved() (a config-page save) to force the next loop()
 // iteration to redraw immediately, instead of waiting for the next
 // scheduled renderIntervalMs tick (up to displayRefreshMinutes away,
@@ -218,7 +230,7 @@ static void onConfigSaved() {
 void setup() {
     Serial.begin(115200);
     delay(300);
-    Serial.println("\nSatellite Tracker booting...");
+    Serial.printf("\nSatellite Tracker booting... (firmware %s)\n", FW_VERSION);
 
     epaperInit();
 
@@ -314,6 +326,20 @@ void loop() {
     if (nowMs - lastWifiScanMs >= WIFI_SCAN_REFRESH_INTERVAL_MS) {
         lastWifiScanMs = nowMs;
         wifiSetup.refreshCache();
+    }
+
+    // See lastWifiCheckMs's comment above for why this exists at all. A
+    // short 5s timeout (vs. the 15s used at boot) keeps a failed attempt
+    // from stalling the 1s sample loop for too long - it'll just retry
+    // again next interval if the network is genuinely still down.
+    if (nowMs - lastWifiCheckMs >= WIFI_CHECK_INTERVAL_MS) {
+        lastWifiCheckMs = nowMs;
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi disconnected - attempting to reconnect...");
+            bool reconnected = wifiSetup.connect(config.current, 5000);
+            Serial.println(reconnected ? "WiFi reconnected"
+                                        : "WiFi reconnect attempt failed - will retry");
+        }
     }
 
     // Keeps the next-pass prediction fresh - only ever computed here in
