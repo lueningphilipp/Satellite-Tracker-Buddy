@@ -5,7 +5,7 @@
 
 WiFiSetup wifiSetup;
 
-static const char* AP_SSID = "SatTracker-Setup";
+static const char* AP_SSID = "SatelliteTrackerBuddy-Setup";
 static const byte DNS_PORT = 53;
 static const int MAX_SCAN_RESULTS = 64;   // plenty for any real-world scan; just a stack-array cap
 
@@ -72,7 +72,7 @@ String WiFiSetup::scanNetworksHtml() {
 static String buildSetupPage() {
     String page = F(
         "<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<title>Satellite Tracker Setup</title>"
+        "<title>Satellite Tracker Buddy Setup</title>"
         "<style>body{font-family:sans-serif;max-width:420px;margin:2em auto;padding:0 1em}"
         "input,select{width:100%;box-sizing:border-box;padding:.5em;margin:.4em 0}"
         "button{width:100%;padding:.7em;background:#222;color:#fff;border:0;border-radius:4px}</style>"

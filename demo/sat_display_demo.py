@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Satellite display demo - PC simulator for the e-paper build (see CLAUDE.md;
+Satellite Tracker Buddy - PC simulator for the e-paper build (see CLAUDE.md;
 the LED-matrix and HUB75 modes that used to live here were dropped along with
 that decision - this is now just the spec for firmware's e-paper renderer).
 
@@ -425,7 +425,7 @@ def main():
         sat.next_pass_text = format_pass(state, when, now0)
         print(f"  next pass (>=10 deg elevation): {sat.next_pass_text}")
 
-    pygame.init(); pygame.display.set_caption("Satellite display demo")
+    pygame.init(); pygame.display.set_caption("Satellite Tracker Buddy - Demo")
     ep = EPaper()
     scr = pygame.display.set_mode(ep.size())
     font = pygame.font.SysFont("dejavusansmono", 16)
@@ -446,7 +446,7 @@ def main():
             if p: trail.append((p[0], p[1])); trail = trail[-150:]
             last_sample = simt
         ep.draw(scr, sat, trail, simt, subsolar(simt), font)
-        pygame.display.set_caption(f"Satellite display demo  -  {speed:g}x")
+        pygame.display.set_caption(f"Satellite Tracker Buddy - Demo  -  {speed:g}x")
         pygame.display.flip(); clock.tick(30)
 
 if __name__ == "__main__":

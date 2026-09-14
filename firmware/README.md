@@ -71,7 +71,7 @@ pio device monitor -b 115200   # serial output
 
 ## First-boot flow
 
-1. No WiFi creds in NVS -> device opens a `SatTracker-Setup` WiFi AP with a
+1. No WiFi creds in NVS -> device opens a `SatelliteTrackerBuddy-Setup` WiFi AP with a
    captive portal. Connect to it from a phone, it should prompt you to the
    setup page automatically (or browse to `192.168.4.1`); enter your WiFi
    SSID/password, save. Device restarts and joins that network.

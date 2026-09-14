@@ -114,7 +114,7 @@ static void recomputeNextPass() {
 // Hold the board's built-in BOOT/FLASH button (GPIO0, active-low, already
 // wired on every ESP32-WROOM dev board - no extra button needed) for 3s
 // *while the device is already running* to forget the stored WiFi network
-// and open the "SatTracker-Setup" captive portal. NORAD id/lat-lon/n2yo key
+// and open the "SatelliteTrackerBuddy-Setup" captive portal. NORAD id/lat-lon/n2yo key
 // are untouched.
 //
 // This must be sampled in loop(), NOT at/before setup() - GPIO0 doubles as
@@ -230,7 +230,7 @@ static void onConfigSaved() {
 void setup() {
     Serial.begin(115200);
     delay(300);
-    Serial.printf("\nSatellite Tracker booting... (firmware %s)\n", FW_VERSION);
+    Serial.printf("\nSatellite Tracker Buddy booting... (firmware %s)\n", FW_VERSION);
 
     epaperInit();
 
@@ -242,7 +242,7 @@ void setup() {
     digitalWrite(STATUS_LED_PIN, LOW);
 
     if (!config.hasWifiCreds() || !wifiSetup.connect(config.current)) {
-        Serial.println("No (or failed) WiFi creds - opening \"SatTracker-Setup\" AP...");
+        Serial.println("No (or failed) WiFi creds - opening \"SatelliteTrackerBuddy-Setup\" AP...");
         wifiSetup.runCaptivePortal(config);   // never returns; restarts on save
     }
     Serial.printf("WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());

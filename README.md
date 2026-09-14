@@ -1,4 +1,4 @@
-# Satellite Ground-Track Display
+# Satellite Tracker Buddy
 
 A desk gadget that tracks any satellite you choose (by NORAD catalog
 number) and shows its live ground track, apogee/perigee, and a few other
@@ -124,7 +124,7 @@ Hold the board's **BOOT** button (built into every ESP32 dev board, no
 extra wiring) for **3 seconds while the device is already running** (not
 while powering it on - see the warning below). It blinks the onboard LED
 5 times to confirm, forgets the stored WiFi network, and reopens the
-`SatTracker-Setup` portal - same flow as first boot.
+`SatelliteTrackerBuddy-Setup` portal - same flow as first boot.
 
 > **Don't hold BOOT while powering the device on.** GPIO0 (the BOOT button)
 > doubles as the ESP32's boot-mode strapping pin - holding it low at the
@@ -184,7 +184,7 @@ pio device monitor -b 115200   # serial output, for following boot/tracking logs
 ### First boot
 
 1. With no WiFi network stored yet, the device opens its own WiFi network
-   named **`SatTracker-Setup`**. Join it from a phone - a sign-in page
+   named **`SatelliteTrackerBuddy-Setup`**. Join it from a phone - a sign-in page
    should pop up automatically (if it doesn't, browse to `192.168.4.1`).
 2. Pick your network from the scanned list (or type one in for hidden
    networks) and enter the password. Save - the device restarts and joins

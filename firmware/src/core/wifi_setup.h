@@ -22,7 +22,7 @@ public:
     // immediately false if no creds are stored at all).
     bool connect(DeviceConfig& config, uint32_t timeoutMs = 15000);
 
-    // Opens "SatTracker-Setup" AP + captive portal, serves a WiFi setup page,
+    // Opens "SatelliteTrackerBuddy-Setup" AP + captive portal, serves a WiFi setup page,
     // saves whatever the user submits to NVS, then restarts the device.
     // Never returns (ESP.restart() at the end).
     void runCaptivePortal(ConfigStore& store);

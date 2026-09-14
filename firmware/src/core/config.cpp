@@ -14,7 +14,7 @@ void ConfigStore::begin() {
     current.siteLat    = prefs.getFloat("siteLat", 0.0f);
     current.siteLon    = prefs.getFloat("siteLon", 0.0f);
     current.n2yoApiKey = prefs.getString("n2yoKey", "");
-    current.hostname   = prefs.getString("hostname", "sattracker");
+    current.hostname   = prefs.getString("hostname", "sattrackerbuddy");
     current.displayRefreshMinutes = prefs.getInt("refreshMin", 2);
     current.elementsFetchMinutes  = prefs.getInt("fetchMin", 1440);
     prefs.end();

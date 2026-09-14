@@ -25,7 +25,7 @@ static const Favourite FAVOURITES[] = {
 
 static const char PAGE_TEMPLATE[] PROGMEM = R"HTML(
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Satellite Tracker</title>
+<title>Satellite Tracker Buddy</title>
 <style>body{font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em}
 input,select{width:100%;box-sizing:border-box;padding:.5em;margin:.3em 0 1em}
 label{font-size:.85em;color:#555}
@@ -37,7 +37,7 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 .status b{color:#555}
 .bad{color:#a22}
 </style></head><body>
-<h2>Satellite Tracker</h2>
+<h2>Satellite Tracker Buddy</h2>
 <div class="status">
   <b>Firmware version:</b> %FWVERSION%<br>
   <b>WiFi:</b> %WIFISTATUS%<br>
