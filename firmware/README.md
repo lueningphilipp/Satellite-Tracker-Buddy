@@ -1,12 +1,11 @@
 # firmware/
 
-PlatformIO project for the ESP32, e-paper build only (see CLAUDE.md).
-WiFi captive portal (+ auto-reconnect), NVS config, OMM/CSV element fetch,
-SGP4, the config web page, and the e-paper renderer (map, land, night
-shading, track, reticle, name/orbit-class, apogee/perigee/incl/period,
-time-in-space, next-pass prediction, firmware version) are all wired up and
-running on real hardware. See CLAUDE.md's Changelog for the detailed,
-chronological log of everything built since the initial bring-up below.
+PlatformIO project for the ESP32, e-paper build only. WiFi captive portal
+(+ auto-reconnect), NVS config, OMM/CSV element fetch, SGP4, the config web
+page, and the e-paper renderer (map, land, night shading, track, reticle,
+name/orbit-class, apogee/perigee/incl/period, time-in-space, next-pass
+prediction, firmware version) are all wired up and running on real
+hardware.
 
 ## Status: bring-up done, core loop verified working on real hardware
 
@@ -30,8 +29,8 @@ One real bug was found and fixed along the way:
   from the very first flash - only propagation was affected, which is why
   this didn't show up until watching the live lat/lon loop.
 
-Verification results (see CLAUDE.md's TODO - this satisfies the "verify
-against the demo to within a few km" requirement):
+Verification results (satisfies the "verify against the demo to within a
+few km" requirement):
 
 - **ISS**: ground distance ~18 km, altitude ~0.7 km off, longitude exact.
   Fully explained by geocentric vs. geodetic latitude - the demo computes
@@ -46,8 +45,7 @@ against the demo to within a few km" requirement):
   SGP4 ports. Negligible for a ground-track display either way.
 
 Remaining known things to double check (kept from the original bring-up -
-see CLAUDE.md's TODO for the full current list, this is not necessarily
-still exhaustive):
+not necessarily still exhaustive):
 
 - `lib_deps` in `platformio.ini` uses `ESP32Async/...` for ESPAsyncWebServer
   and AsyncTCP - resolved fine as of this build, but that ecosystem's library
@@ -91,5 +89,4 @@ kept as-is for the record (bug fixes, verification numbers). It's since
 grown well past that point - display rendering, the trail buffer, WiFi
 change/reset, config page, etc. are all built and running. For what the
 firmware actually does today and how to use it, see the repo root's
-[README.md](../README.md); for the full chronological "what changed and
-why" log, see [CLAUDE.md](../CLAUDE.md)'s TODO section.
+[README.md](../README.md).

@@ -198,8 +198,8 @@ pio device monitor -b 115200   # serial output, for following boot/tracking logs
 - No deep sleep / battery power path - the device expects to be USB-powered.
 - No frame/CAD yet.
 - No MQTT control.
-- No firmware auto-update (OTA) yet - see CLAUDE.md for the current
-  thinking on this.
+- No firmware auto-update (OTA) yet - a versioned manifest/release-based
+  design is planned but not implemented.
 - CelesTrak rate-limiting can occasionally show OFFLINE - see Rate limits
   above.
 
@@ -236,7 +236,6 @@ firmware/      PlatformIO project, env `epaper` (the only build target)
                       trail_buffer, land_mask.h (generated, see tools/)
 tools/         mask_to_progmem.py - regenerates firmware's land mask from
                the demo's own embedded one (don't hand-edit the header)
-cad/           frame/bezel/diffuser - not started yet
 ```
 
 `demo/` is a PC simulator (Python + pygame) of the exact display, and it's
@@ -291,7 +290,7 @@ loop  → every 1s:  SGP4(now) → lat/lon → push to trail ring buffer → ren
 
 - Keep this file up to date whenever a user-facing feature changes (config
   page fields, button behavior, setup steps, etc.) - it's the "what is this
-  and how do I use it" doc, [CLAUDE.md](CLAUDE.md) is the working/dev log.
+  and how do I use it" doc.
 - Keep the demo and firmware renderers visually identical (change a
   rendering rule in the demo first, check it there, then port it).
 - All times UTC internally. Only convert for display.
@@ -300,5 +299,3 @@ loop  → every 1s:  SGP4(now) → lat/lon → push to trail ring buffer → ren
   handler, which runs on the `async_tcp` task and will crash the device via
   watchdog if blocked for more than a couple seconds.
 - Commit small. Don't add dependencies without a comment saying why.
-
-See [CLAUDE.md](CLAUDE.md) for the full chronological development log.
