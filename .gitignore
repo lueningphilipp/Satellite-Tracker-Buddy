@@ -11,3 +11,8 @@ firmware/.pio/
 # Python bytecode cache (demo/) - was tracked by mistake for the same reason.
 __pycache__/
 *.pyc
+
+# Local AI-agent working log - kept on disk and edited locally, but not
+# meant to be part of the public repo. Fully purged from history (not just
+# excluded going forward) via a git filter-repo pass.
+CLAUDE.md
