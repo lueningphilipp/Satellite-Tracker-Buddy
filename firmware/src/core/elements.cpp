@@ -114,43 +114,72 @@ static time_t unixFromYMD(int year, int mon, int day) {
 }
 
 bool fetchLaunchDate(const String& noradId, time_t& out, String* errOut) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
     String url = "https://celestrak.org/satcat/records.php?CATNR=" + noradId + "&FORMAT=json";
-    if (!http.begin(client, url)) {
-        if (errOut) *errOut = "couldn't start request";
-        return false;
-    }
 
-    int code = http.GET();
-    celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
-    if (code != HTTP_CODE_OK) {
+    // Retried once, but only on a connection/TLS-level failure ("network
+    // error" - http.GET() returning negative rather than a real HTTP
+    // status), never on an actual HTTP error code (403/404/etc.) - those
+    // are real server responses, retrying them immediately wouldn't help
+    // and would just waste a request against CelesTrak's rate limit.
+    // This is the third of three back-to-back HTTPS/TLS handshakes in one
+    // refetch cycle (elements -> n2yo -> launch date, see main.cpp), each
+    // opening its own WiFiClientSecure/HTTPClient - confirmed on real
+    // hardware that this specific fetch can intermittently fail this way
+    // and then succeed cleanly moments later on an otherwise-identical
+    // retry, which fits ESP32's known heap-fragmentation-after-repeated-
+    // TLS-sessions behavior better than a real, reproducible bug. Demo has
+    // no equivalent (Python doesn't hit this failure mode), so this one's
+    // firmware-only - same as a few other exceptions already noted in
+    // CLAUDE.md's Conventions.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+            Serial.println("launch date fetch: retrying once after a network error");
+            delay(300);   // let the failed attempt's TLS session actually be reclaimed
+        }
+
+        WiFiClientSecure client;
+        client.setInsecure();
+        HTTPClient http;
+        if (!http.begin(client, url)) {
+            if (errOut) *errOut = "couldn't start request";
+            return false;
+        }
+
+        int code = http.GET();
+        celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
+        if (code == HTTP_CODE_OK) {
+            String body = http.getString();
+            http.end();
+
+            // Plain string search rather than pulling in ArduinoJson for one
+            // fixed-format field - matches CSV parsing's style elsewhere in
+            // this file.
+            const char* key = "\"LAUNCH_DATE\":\"";
+            int idx = body.indexOf(key);
+            if (idx < 0) { if (errOut) *errOut = "no LAUNCH_DATE in response"; return false; }
+            idx += strlen(key);
+            String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
+            if (dateStr.length() != 10) { if (errOut) *errOut = "malformed date"; return false; }
+
+            int y, mo, d;
+            if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) {
+                if (errOut) *errOut = "malformed date";
+                return false;
+            }
+            out = unixFromYMD(y, mo, d);   // UTC, not local - all times UTC internally per CLAUDE.md
+            if (errOut) *errOut = "OK";
+            return true;
+        }
+
         Serial.printf("launch date fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
-        if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
-        return false;
+        if (code > 0) {
+            if (errOut) *errOut = "HTTP " + String(code);
+            return false;
+        }
+        if (errOut) *errOut = "network error";   // loop around for one retry
     }
-    String body = http.getString();
-    http.end();
-
-    // Plain string search rather than pulling in ArduinoJson for one fixed-
-    // format field - matches CSV parsing's style elsewhere in this file.
-    const char* key = "\"LAUNCH_DATE\":\"";
-    int idx = body.indexOf(key);
-    if (idx < 0) { if (errOut) *errOut = "no LAUNCH_DATE in response"; return false; }
-    idx += strlen(key);
-    String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
-    if (dateStr.length() != 10) { if (errOut) *errOut = "malformed date"; return false; }
-
-    int y, mo, d;
-    if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) {
-        if (errOut) *errOut = "malformed date";
-        return false;
-    }
-    out = unixFromYMD(y, mo, d);   // UTC, not local time - all times UTC internally per CLAUDE.md
-    if (errOut) *errOut = "OK";
-    return true;
+    return false;
 }
 
 bool fetchN2yoName(const String& noradId, const String& apiKey, String& outName, String* errOut) {
