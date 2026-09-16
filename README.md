@@ -113,10 +113,42 @@ effect, same as before.
   (see "Rate limits" below). Takes effect immediately, no restart.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
   reconnect (WiFi hostnames are set at connection time, not live).
+- **Update manifest URL** - advanced; leave it alone unless you're testing
+  against your own server or a fork's releases. See "Firmware updates"
+  below.
 - **WiFi** - shows the currently-connected network, a dropdown of nearby
   scanned networks, and SSID/password fields to switch. Leave the SSID
   field blank to change other settings without touching WiFi. Saving a new
   network restarts the device to reconnect.
+
+### Firmware updates
+
+The status panel at the top of the config page shows the running firmware
+version and an update status line, next to a **Check for updates** button.
+This is entirely manual - the device never checks on its own, downloads
+anything in the background, or installs anything without you clicking
+**Install**. Nothing to configure, no toggle to find.
+
+1. Click **Check for updates**. The page reloads and the status line says
+   either "up to date", "update available: X.Y.Z (running A.B.C, N KB
+   download)", or the specific reason it failed (no WiFi, no release
+   published, a network error).
+2. If a newer version was found, an **Install `<version>`** button appears
+   right below the status line - click it once, no confirmation prompt.
+   Installing verifies the download against the release's published
+   checksum before it's written anywhere permanent; a corrupted or
+   incomplete download is discarded rather than installed.
+3. The device restarts on its own once the install finishes (a minute or
+   two, depending on your connection). Reload the config page after a short
+   wait to see the new version.
+4. If the new build can't get online within about 10 minutes of that
+   restart, the device automatically reverts to the previous version by
+   itself - no bad update can leave the device stuck.
+
+A dev build (anything not built from a clean `fw-v*` tag - the version
+string on the page will show a commit hash or a `-dirty`/`-N-gHASH` suffix
+instead of a plain `X.Y.Z`) shows "update check disabled" instead, since
+there's no released version to compare it against.
 
 ### Changing WiFi later without the config page
 
@@ -198,8 +230,11 @@ pio device monitor -b 115200   # serial output, for following boot/tracking logs
 - No deep sleep / battery power path - the device expects to be USB-powered.
 - No frame/CAD yet.
 - No MQTT control.
-- No firmware auto-update (OTA) yet - a versioned manifest/release-based
-  design is planned but not implemented.
+- Firmware updates are manual-only by design (see "Firmware updates"
+  above) - there's no auto-check timer or auto-install, and the update
+  download isn't cryptographically signed yet (only checksum-verified),
+  so it isn't hardened against a hostile network the way a background
+  auto-update would need to be.
 - CelesTrak rate-limiting can occasionally show OFFLINE - see Rate limits
   above.
 

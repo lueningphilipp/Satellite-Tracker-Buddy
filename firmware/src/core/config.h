@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "ota.h"   // OTA_DEFAULT_MANIFEST_URL
 
 // Everything the device remembers across reboots, per CLAUDE.md's "Satellite
 // selection" section: WiFi creds, NORAD id, site lat/lon, n2yo API key.
@@ -16,6 +17,11 @@ struct DeviceConfig {
     String hostname = "sattrackerbuddy";  // DHCP/mDNS-visible device name
     int displayRefreshMinutes = 2;       // full e-paper refresh interval
     int elementsFetchMinutes = 1440;     // CelesTrak elements/launch-date refetch interval (default: 24h)
+    // Where "Check for updates" fetches the release manifest from. Default
+    // is this repo's GitHub "latest release" alias; overridable so a device
+    // can be pointed at a local test server or a fork's releases (see
+    // core/ota.h).
+    String otaManifestUrl = OTA_DEFAULT_MANIFEST_URL;
 };
 
 class ConfigStore {

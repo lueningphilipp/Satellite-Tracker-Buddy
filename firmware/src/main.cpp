@@ -9,6 +9,7 @@
 #include "core/sgp4_track.h"
 #include "core/pass_predict.h"
 #include "core/version.h"
+#include "core/ota.h"
 #include "web/web_server.h"
 #include "display/epaper_render.h"
 #include "display/trail_buffer.h"
@@ -236,6 +237,10 @@ void setup() {
 
     config.begin();
     celestrakRequests.begin();
+    // Reads whether this is the first boot after an OTA (PENDING_VERIFY)
+    // and the "just updated" breadcrumb - no network needed. The health
+    // mark / rollback timeout itself runs from loop(), see ota.h.
+    ota.begin();
 
     pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
     pinMode(STATUS_LED_PIN, OUTPUT);
@@ -367,6 +372,22 @@ void loop() {
     if (passRecomputeNeeded || passTimeElapsed || passStale) {
         recomputeNextPass();
     }
+
+    // Manual firmware updates + post-update health check - see core/ota.h.
+    // Both the manifest check and the download/flash are blocking network
+    // work that only ever runs here in loop() (the config page's buttons
+    // just set flags - the async_tcp rule again). A successful install
+    // ends in ESP.restart(), so nothing below this runs on that iteration.
+    //
+    // "Healthy" for the purpose of cancelling a rollback: WiFi is up and
+    // the TLS/HTTP stack has produced a real response from CelesTrak - an
+    // "HTTP 404" for a bad NORAD id proves the stack works just as well as
+    // "OK" does, so a mistyped satellite can't get a good build rolled
+    // back. Only a connection/TLS-level failure ("network error") or no
+    // fetch at all keeps it unhealthy.
+    bool wifiUp = WiFi.status() == WL_CONNECTED;
+    bool networkHealthy = wifiUp && (online || connStatus.elementsStatus.startsWith("HTTP "));
+    ota.loop(config.current.otaManifestUrl, wifiUp, networkHealthy);
 
     // Read live from config each time (cheap) rather than caching, so a
     // refresh-rate change from the config page takes effect on the very

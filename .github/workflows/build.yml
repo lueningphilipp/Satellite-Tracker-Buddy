@@ -1,0 +1,45 @@
+# Compile check on every push/PR that touches the firmware, so a broken
+# build is caught before it's ever tagged as a release (release.yml).
+name: Build firmware
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags so extra_script.py's `git describe` produces
+          # the same version string it does locally, instead of a bare hash.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            firmware/.pio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        run: pio run -d firmware
+
+      - name: Report size
+        run: ls -l firmware/.pio/build/epaper/firmware.bin

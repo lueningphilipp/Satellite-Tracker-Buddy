@@ -17,6 +17,8 @@ void ConfigStore::begin() {
     current.hostname   = prefs.getString("hostname", "sattrackerbuddy");
     current.displayRefreshMinutes = prefs.getInt("refreshMin", 2);
     current.elementsFetchMinutes  = prefs.getInt("fetchMin", 1440);
+    current.otaManifestUrl = prefs.getString("otaUrl", OTA_DEFAULT_MANIFEST_URL);
+    if (current.otaManifestUrl.length() == 0) current.otaManifestUrl = OTA_DEFAULT_MANIFEST_URL;
     prefs.end();
 }
 
@@ -38,5 +40,6 @@ void ConfigStore::save() {
     prefs.putString("hostname", current.hostname);
     prefs.putInt("refreshMin", current.displayRefreshMinutes);
     prefs.putInt("fetchMin", current.elementsFetchMinutes);
+    prefs.putString("otaUrl", current.otaManifestUrl);
     prefs.end();
 }

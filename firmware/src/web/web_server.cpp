@@ -4,6 +4,7 @@
 #include "../core/geoip.h"
 #include "../core/request_tracker.h"
 #include "../core/version.h"
+#include "../core/ota.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
@@ -36,10 +37,16 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 .status{background:#f4f4f4;border-radius:6px;padding:.7em 1em;margin-bottom:1.2em;font-size:.85em;line-height:1.6}
 .status b{color:#555}
 .bad{color:#a22}
+.inline{display:inline}
+.inline button{padding:.35em .7em;font-size:.9em}
+.install{background:#a52}
 </style></head><body>
 <h2>Satellite Tracker Buddy</h2>
 <div class="status">
   <b>Firmware version:</b> %FWVERSION%<br>
+  <b>Firmware update:</b> %OTASTATUS%<br>
+  <form class="inline" method="POST" action="/ota/check"><button class="fav">Check for updates</button></form>
+  %OTAINSTALL%<br>
   <b>WiFi:</b> %WIFISTATUS%<br>
   <b>Elements fetch:</b> %ELEMENTSSTATUS%<br>
   <b>Launch date fetch:</b> %LAUNCHSTATUS%<br>
@@ -88,6 +95,10 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   <label>Device hostname (shown to your router/DHCP; requires a reconnect
   to take effect)</label>
   <input name="hostname" value="%HOSTNAME%">
+
+  <label>Update manifest URL (advanced - only change this for testing
+  against a local server, or to point at a fork's own releases)</label>
+  <input name="otaurl" value="%OTAURL%">
 
   <hr>
   <label>WiFi network - currently <b>%CURSSID%</b>. Pick a nearby network or
@@ -182,6 +193,21 @@ static String renderPage(const DeviceConfig& cfg) {
     page.replace("%REFRESH%", String(cfg.displayRefreshMinutes));
     page.replace("%FETCH%", String(cfg.elementsFetchMinutes));
     page.replace("%HOSTNAME%", cfg.hostname);
+    page.replace("%OTAURL%", cfg.otaManifestUrl);
+
+    // Firmware update status/button - see core/ota.h. The install button
+    // only appears once a check has actually found a newer release, so a
+    // fresh page load (before any check) or an up-to-date device shows just
+    // the status line and the "Check for updates" button above it.
+    String otaStatus = ota.status();
+    page.replace("%OTASTATUS%", ota.statusIsError()
+                     ? ("<span class=\"bad\">" + otaStatus + "</span>")
+                     : otaStatus);
+    page.replace("%OTAINSTALL%", ota.updateAvailable()
+        ? ("<form class=\"inline\" method=\"POST\" action=\"/ota/install\">"
+           "<button class=\"install\">Install " + ota.availableVersion() + "</button></form>")
+        : "");
+
     // Current SSID only - never the password, so it can't leak into a page
     // source view.
     page.replace("%CURSSID%", cfg.wifiSsid.length() ? cfg.wifiSsid : "(not set)");
@@ -252,7 +278,12 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"elementsStatus\":\"" + connStatus.elementsStatus + "\",";
         json += "\"launchDateStatus\":\"" + connStatus.launchDateStatus + "\",";
         json += "\"n2yoStatus\":\"" + connStatus.n2yoStatus + "\",";
-        json += "\"celestrakRequests2h\":" + String(celestrakRequests.countInLast2h());
+        json += "\"celestrakRequests2h\":" + String(celestrakRequests.countInLast2h()) + ",";
+        json += "\"otaEnabled\":" + String(ota.enabled() ? "true" : "false") + ",";
+        json += "\"otaStatus\":\"" + ota.status() + "\",";
+        json += "\"otaUpdateAvailable\":" + String(ota.updateAvailable() ? "true" : "false");
+        if (ota.updateAvailable())
+            json += ",\"otaAvailableVersion\":\"" + ota.availableVersion() + "\"";
         json += "}";
         req->send(200, "application/json", json);
     });
@@ -307,6 +338,12 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             if (newHostname != store.current.hostname) needsRestart = true;
             store.current.hostname = newHostname;
         }
+        // Blank means "keep the default/current URL" - a manual POST
+        // clearing this field shouldn't leave the device unable to check
+        // for updates at all.
+        if (req->hasParam("otaurl", true) && req->getParam("otaurl", true)->value().length() > 0) {
+            store.current.otaManifestUrl = req->getParam("otaurl", true)->value();
+        }
         // Blank SSID means "leave WiFi alone" - the current network's name
         // is only ever shown, never blanked out via this form.
         if (req->hasParam("ssid", true) && req->getParam("ssid", true)->value().length() > 0) {
@@ -331,6 +368,30 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
                    "<html><body><p>Saved. Refetching elements for "
                    + store.current.noradId + "...</p><a href=\"/\">Back</a></body></html>");
         if (onConfigSaved) onConfigSaved();
+    });
+
+    // Manual firmware-update flow (see core/ota.h) - both handlers only set
+    // a flag for loop() to act on. Neither the manifest fetch nor the
+    // multi-second flash write may run on this async_tcp task (same rule as
+    // everything else in this file - see CLAUDE.md's "Known gotchas").
+    server.on("/ota/check", HTTP_POST, [](AsyncWebServerRequest* req) {
+        ota.requestCheck();
+        req->send(200, "text/html",
+                   "<html><body><p>Checking for updates...</p>"
+                   "<a href=\"/\">Back</a></body></html>");
+    });
+    // No confirmation step by design: this button only ever renders after a
+    // check has found a genuinely newer release, so a click here is already
+    // a deliberate, on-page decision - see CLAUDE.md's OTA plan.
+    server.on("/ota/install", HTTP_POST, [](AsyncWebServerRequest* req) {
+        bool started = ota.requestInstall();
+        req->send(200, "text/html",
+                   started
+                       ? "<html><body><p>Installing update - the device will restart on its own "
+                         "in a minute or two. Reload this page after a short wait to see the new "
+                         "version.</p><a href=\"/\">Back</a></body></html>"
+                       : "<html><body><p>No update is currently queued (run a check first).</p>"
+                         "<a href=\"/\">Back</a></body></html>");
     });
 
     server.begin();
