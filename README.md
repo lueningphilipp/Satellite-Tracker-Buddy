@@ -125,14 +125,18 @@ effect, same as before.
 
 The status panel at the top of the config page shows the running firmware
 version and an update status line, next to a **Check for updates** button.
-This is entirely manual - the device never checks on its own, downloads
-anything in the background, or installs anything without you clicking
+The device checks once automatically at every boot, so the status line
+already has an answer - "up to date", "update available: X.Y.Z", or a
+failure reason - the first time you load the page after a power-up; the
+button is there for an on-demand recheck any other time. Nothing beyond
+that check happens on its own: no repeated/periodic checking, no
+background download, and nothing installs without you clicking
 **Install**. Nothing to configure, no toggle to find.
 
-1. Click **Check for updates**. The page reloads and the status line says
-   either "up to date", "update available: X.Y.Z (running A.B.C, N KB
-   download)", or the specific reason it failed (no WiFi, no release
-   published, a network error).
+1. Load the config page (or click **Check for updates** for a fresh check).
+   The status line says either "up to date", "update available: X.Y.Z
+   (running A.B.C, N KB download)", or the specific reason it failed (no
+   WiFi, no release published, a network error).
 2. If a newer version was found, an **Install `<version>`** button appears
    right below the status line - click it once, no confirmation prompt.
    Installing verifies the download against the release's published

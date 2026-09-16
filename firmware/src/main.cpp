@@ -265,6 +265,16 @@ void setup() {
 
     refetchAndInit();
 
+    // One update check per boot, automatically - just sets a flag here
+    // (setup() is otherwise a fine place to call ota.loop() directly, since
+    // the web server/async_tcp task isn't running yet, but requestCheck()
+    // keeps the actual network call on the exact same loop()-only path as
+    // everything else, so there's only ever one place that runs it). This
+    // only ever populates the status line the user sees on the config page
+    // - install still only ever happens from an explicit button click, no
+    // auto-install, per the "manual process" decision above.
+    ota.requestCheck();
+
     // Populate the config page's WiFi dropdown before the web server (and
     // its async_tcp task) starts - see wifi_setup.h's scanNetworksHtml() for
     // why this can't be done live inside the page's request handler.
