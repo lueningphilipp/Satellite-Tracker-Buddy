@@ -44,8 +44,8 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 <h2>Satellite Tracker Buddy</h2>
 <div class="status">
   <b>Firmware version:</b> %FWVERSION%<br>
-  <b>Firmware update:</b> %OTASTATUS%<br>
-  <form class="inline" method="POST" action="/ota/check"><button class="fav">Check for updates</button></form>
+  <b>Firmware update:</b> %OTASTATUS%
+  <form class="inline" method="POST" action="/ota/check"><button class="fav">Check for updates</button></form><br>
   %OTAINSTALL%<br>
   <b>WiFi:</b> %WIFISTATUS%<br>
   <b>Elements fetch:</b> %ELEMENTSSTATUS%<br>
