@@ -154,6 +154,9 @@ function geoIpFallback(reason){
   });
 }
 </script>
+<p style="text-align:center;font-size:.8em;color:#888;margin-top:2em">
+  <a href="https://github.com/lueningphilipp/Satellite-Tracker-Buddy" style="color:#888">Satellite Tracker Buddy on GitHub</a>
+</p>
 </body></html>
 )HTML";
 
