@@ -38,6 +38,23 @@ bool haveLaunchDate = false;
 static unsigned long lastSampleMs = 0;
 static unsigned long lastRenderMs = 0;
 static unsigned long lastRefetchMs = 0;
+// Confirmed on real hardware: a transient failure (DNS resolver blip,
+// router hiccup, CelesTrak briefly erroring) left the display stuck on
+// stale fallback data for the rest of a 30-min elementsFetchMinutes
+// window, even though the underlying network was fine again within
+// seconds - the schedule only ever gave it one shot per full interval, up
+// to 24h apart at the default 1440-min setting. A handful of short, bounded
+// retries fixes that without turning into a hammering loop if CelesTrak (or
+// the network) is genuinely down for longer: after a failed fetch, retry
+// after ELEMENTS_RETRY_INTERVAL_MS instead of waiting the full interval,
+// for up to ELEMENTS_RETRY_MAX_ATTEMPTS tries, then fall back to the normal
+// cadence until the next scheduled attempt. A success at any point resets
+// the count, so a genuinely down CelesTrak still only costs a few extra
+// requests per outage, not a retry storm - see the README's Rate limits
+// section for why that budget matters.
+static int elementsFetchFailCount = 0;
+static const unsigned long ELEMENTS_RETRY_INTERVAL_MS = 2UL * 60UL * 1000UL;
+static const int ELEMENTS_RETRY_MAX_ATTEMPTS = 2;
 static unsigned long lastWifiScanMs = 0;
 static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 // WiFi.begin() is only ever called from setup() and the captive-portal flow
@@ -141,12 +158,29 @@ static unsigned long buttonHeldSinceMs = 0;   // 0 = not currently held
 static void refetchAndInit() {
     OrbitalElements el;
     online = fetchElements(config.current.noradId, el, &connStatus.elementsStatus);
+    // Tracks elementsFetchFailCount regardless of what triggered this call
+    // (the scheduled path in loop(), or a config-page save via
+    // onConfigSaved()) - a manual save that succeeds should clear a
+    // pending retry just as much as a scheduled one does, and either path
+    // failing should count toward the same short retry window. See
+    // elementsFetchFailCount's comment near loop()'s scheduling logic.
     if (online) {
+        if (elementsFetchFailCount > 0)
+            Serial.println("Elements fetch recovered - back to the normal schedule");
+        elementsFetchFailCount = 0;
         Serial.printf("Fetched elements for %s: %s\n",
                        config.current.noradId.c_str(), el.name.c_str());
     } else {
+        elementsFetchFailCount++;
         Serial.printf("Elements fetch failed (%s) - using stale fallback (ISS)\n",
                        connStatus.elementsStatus.c_str());
+        if (elementsFetchFailCount <= ELEMENTS_RETRY_MAX_ATTEMPTS)
+            Serial.printf("Will retry in %lu min (attempt %d/%d)\n",
+                          ELEMENTS_RETRY_INTERVAL_MS / 60000UL,
+                          elementsFetchFailCount, ELEMENTS_RETRY_MAX_ATTEMPTS);
+        else
+            Serial.printf("Giving up retrying for now - back to the normal %d-min schedule\n",
+                          config.current.elementsFetchMinutes);
         el = fallbackElements();
     }
 
@@ -328,10 +362,14 @@ void loop() {
     // renderIntervalMs below - the config page clamps this to >=10 minutes
     // server-side (see web_server.cpp) to keep even the most aggressive
     // setting well clear of CelesTrak's 50-errors/2h firewall threshold.
+    // After a failure, a short bounded retry window takes over instead -
+    // see elementsFetchFailCount's comment above.
     unsigned long refetchIntervalMs = (unsigned long)config.current.elementsFetchMinutes * 60UL * 1000UL;
-    if (nowMs - lastRefetchMs >= refetchIntervalMs) {
+    bool retrying = elementsFetchFailCount > 0 && elementsFetchFailCount <= ELEMENTS_RETRY_MAX_ATTEMPTS;
+    unsigned long effectiveIntervalMs = retrying ? ELEMENTS_RETRY_INTERVAL_MS : refetchIntervalMs;
+    if (nowMs - lastRefetchMs >= effectiveIntervalMs) {
         lastRefetchMs = nowMs;
-        refetchAndInit();
+        refetchAndInit();   // updates elementsFetchFailCount itself - see its own comment
     }
 
     // Keeps the config page's WiFi dropdown from going stale forever. Runs

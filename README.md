@@ -110,7 +110,12 @@ effect, same as before.
 - **Elements/launch-date fetch interval** - how often CelesTrak is polled,
   in minutes (10-1440, default 1440/24h). Kept at a 10-minute floor to stay
   well clear of CelesTrak's rate limit even at the most aggressive setting
-  (see "Rate limits" below). Takes effect immediately, no restart.
+  (see "Rate limits" below). Takes effect immediately, no restart. A failed
+  fetch (a brief DNS/network blip, a transient CelesTrak error) retries
+  after 2 minutes rather than waiting the full interval, up to 2 extra
+  tries before falling back to the normal schedule - so a short outage
+  doesn't leave the display stuck on stale data for up to 24 hours at the
+  default setting.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
   reconnect (WiFi hostnames are set at connection time, not live).
 - **Update manifest URL** - advanced; leave it alone unless you're testing
