@@ -33,6 +33,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # tags needed for `git describe` in extra_script.py
+          fetch-tags: true # fetch-depth: 0 alone doesn't reliably fetch *other*
+                            # tags as full objects in every actions/checkout
+                            # version - confirmed the hard way: fw-v0.9.8's
+                            # release notes came back blank because the "Use
+                            # the tag's own message" step below couldn't read
+                            # this tag's own annotation without this
 
       - name: Derive and verify the version from the tag
         id: ver
@@ -87,9 +93,16 @@ jobs:
       - name: Use the tag's own message as the release notes
         id: notes
         run: |
+          NOTES="$(git tag -l --format='%(contents)' "${{ steps.ver.outputs.tag }}")"
+          if [ -z "$NOTES" ]; then
+            echo "::warning::No tag annotation found for ${{ steps.ver.outputs.tag }} - falling back to a generic note. Was it created with 'git tag -a ... -m \"...\"' (an annotated tag, not a lightweight one)?"
+            NOTES="Firmware ${{ steps.ver.outputs.version }}."
+          fi
+          echo "Captured release notes:"
+          echo "$NOTES"
           {
             echo "body<<NOTES_EOF"
-            git tag -l --format='%(contents)' "${{ steps.ver.outputs.tag }}"
+            echo "$NOTES"
             echo "NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
