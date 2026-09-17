@@ -31,19 +31,32 @@ void epaperInit() {
     display.setRotation(0);
 }
 
+// LAND_MASK is generated at the map area's own native size (see
+// tools/gen_land_mask.py and the comment above MASK_B64 in the demo for why
+// - it used to be a separate 360x180 "1 pixel/degree" grid, upscaled into
+// ~2.2x2.2-pixel blocks to fill this same area, which is what made the
+// coastlines look blocky on real hardware). Caught here at compile time
+// rather than as a silent visual regression if the mask is ever
+// regenerated at a different size than this file expects.
+static_assert(LAND_MASK_W == W && LAND_MASK_H == MH,
+              "LAND_MASK size doesn't match the map area (W x MH) - "
+              "regenerate it: python tools/gen_land_mask.py --write-demo "
+              "&& python tools/mask_to_progmem.py");
+
 static void proj(double lat, double lon, int w, int h, int& x, int& y) {
     x = (int)((lon + 180.0) / 360.0 * w);
     y = (int)((90.0 - lat) / 180.0 * h);
 }
 
 static void drawMap(double sunDec, double sunLon) {
-    double sx = (double)W / LAND_MASK_W, sy = (double)MH / LAND_MASK_H;
-    for (int y = 0; y < LAND_MASK_H; y++) {
-        for (int x = 0; x < LAND_MASK_W; x++) {
-            if (landAt(x, y))
-                display.fillRect((int)(x * sx), (int)(y * sy), (int)sx + 1, (int)sy + 1, GxEPD_BLACK);
-        }
-    }
+    // One call, not a 320,000-iteration app-level loop: LAND_MASK is
+    // already packed in exactly the format Adafruit_GFX::drawBitmap()
+    // expects (row-padded-to-byte, MSB-first, PROGMEM - see
+    // tools/mask_to_progmem.py), and unset bits are left transparent, so
+    // this paints land black and leaves sea as whatever fillScreen() set
+    // (white) - same effect the old per-pixel landAt()+fillRect() loop
+    // had, just as a single well-optimized library call.
+    display.drawBitmap(0, 0, LAND_MASK, LAND_MASK_W, LAND_MASK_H, GxEPD_BLACK);
     // Night-side hatch: the demo uses soft gray dots; a true B/W panel has
     // no gray, so these become sparse black dots instead - same stippled
     // effect, just higher contrast.
@@ -56,14 +69,12 @@ static void drawMap(double sunDec, double sunLon) {
     }
 }
 
-// Looks up landAt() (the same 360x180 mask drawMap() paints from) for a
-// map pixel in W x MH space - mirrors the demo's land_at_px().
+// Looks up landAt() for a map pixel in W x MH space - mirrors the demo's
+// land_at_px(). Direct index, no scaling: the static_assert above
+// guarantees LAND_MASK is already at native W x MH resolution.
 static bool landAtPx(int x, int y) {
-    int mx = ((x * LAND_MASK_W) / W) % LAND_MASK_W;
-    if (mx < 0) mx += LAND_MASK_W;
-    int my = (y * LAND_MASK_H) / MH;
-    if (my < 0) my = 0;
-    if (my >= LAND_MASK_H) my = LAND_MASK_H - 1;
+    int mx = ((x % W) + W) % W;   // wrap longitude
+    int my = y < 0 ? 0 : (y >= MH ? MH - 1 : y);
     return landAt(mx, my);
 }
 

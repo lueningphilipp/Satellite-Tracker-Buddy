@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Exports the demo's embedded 360x180 land mask as a PROGMEM-packed 1bpp C
-array for firmware, so the two never drift apart (reads MASK_B64 straight out
-of sat_display_demo.py rather than a hand-copied duplicate).
+Exports the demo's embedded land mask as a PROGMEM-packed 1bpp C array for
+firmware, so the two never drift apart (reads MASK_B64 straight out of
+sat_display_demo.py rather than a hand-copied duplicate).
 
-Threshold matches demo's land_grid() exactly: land_img.get_at((x,y))[0] > 100
-(land_img is native 360x180 already, so no resampling needed for the e-paper
-renderer, which uses the mask at that exact resolution).
+Threshold matches demo's land_grid() exactly: land_img.get_at((x,y))[0] > 100.
+Dimensions are read from the decoded PNG itself (not hardcoded here) - the
+mask is generated at the map's own native size by tools/gen_land_mask.py
+(see its docstring and the comment above MASK_B64 in the demo for why:
+800x400, not the 360x180 "1 pixel/degree" size this used to be), so no
+resampling happens here either way, whatever that size is.
 
     python tools/mask_to_progmem.py
     -> writes firmware/src/display/land_mask.h
@@ -16,8 +19,6 @@ import re, sys, io, base64, pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEMO = ROOT / "demo" / "sat_display_demo.py"
 OUT = ROOT / "firmware" / "src" / "display" / "land_mask.h"
-
-W, H = 360, 180
 
 def main():
     src = DEMO.read_text()
@@ -29,9 +30,7 @@ def main():
     import pygame
     pygame.init()
     img = pygame.image.load(io.BytesIO(png_bytes)).convert(24)
-    if img.get_size() != (W, H):
-        sys.exit(f"Expected a {W}x{H} mask, got {img.get_size()} - "
-                  f"check W/H in this script match the demo's land_grid(360, 180) call")
+    W, H = img.get_size()
 
     # Pack row-major, 1 bit/pixel, MSB first, each row padded to a whole byte
     # (matches the common PROGMEM-bitmap convention, e.g. Adafruit_GFX's
@@ -59,7 +58,7 @@ def main():
         lines.append(f"    {chunk},")
     lines.append("};")
     lines.append("")
-    lines.append("// True if (x, y) - 0<=x<360, 0<=y<180 - is land.")
+    lines.append(f"// True if (x, y) - 0<=x<{W}, 0<=y<{H} - is land.")
     lines.append("inline bool landAt(int x, int y) {")
     lines.append("    uint8_t byte = pgm_read_byte(&LAND_MASK[y * LAND_MASK_ROW_BYTES + x / 8]);")
     lines.append("    return (byte >> (7 - (x % 8))) & 1;")
