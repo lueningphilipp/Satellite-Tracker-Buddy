@@ -374,11 +374,45 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
     // a flag for loop() to act on. Neither the manifest fetch nor the
     // multi-second flash write may run on this async_tcp task (same rule as
     // everything else in this file - see CLAUDE.md's "Known gotchas").
+    // Was a static "Checking for updates..." page with no way to tell when
+    // the check (which runs from loop(), not this handler - see above)
+    // actually finished, short of the user manually clicking Back and
+    // reloading "/" themselves, possibly more than once if it wasn't done
+    // yet - reported as "it goes to this page and never returns" on real
+    // hardware. Now polls /config's otaStatus (already exposed there) every
+    // second and redirects to "/" itself once it stops starting with
+    // "checking" - requestCheck() writes that prefix synchronously so the
+    // very first poll already sees it, not a stale result from before this
+    // click. Capped at 30 tries so a truly stuck check (e.g. a hung TLS
+    // handshake short of its own internal timeout) still leaves a way back
+    // instead of polling forever.
     server.on("/ota/check", HTTP_POST, [](AsyncWebServerRequest* req) {
         ota.requestCheck();
-        req->send(200, "text/html",
-                   "<html><body><p>Checking for updates...</p>"
-                   "<a href=\"/\">Back</a></body></html>");
+        req->send(200, "text/html", R"HTML(
+<html><body style="font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em">
+<p id="msg">Checking for updates...</p>
+<a href="/">Back</a>
+<script>
+var tries = 0;
+function poll() {
+  tries++;
+  fetch('/config').then(function(r){ return r.json(); }).then(function(data){
+    if (data.otaStatus && data.otaStatus.indexOf('checking') !== 0) {
+      window.location.href = '/';
+    } else if (tries < 30) {
+      setTimeout(poll, 1000);
+    } else {
+      document.getElementById('msg').textContent =
+        'Still checking - this is taking longer than usual. Click Back and reload "/" in a bit.';
+    }
+  }).catch(function(){
+    if (tries < 30) setTimeout(poll, 1000);
+  });
+}
+setTimeout(poll, 1000);
+</script>
+</body></html>
+)HTML");
     });
     // No confirmation step by design: this button only ever renders after a
     // check has found a genuinely newer release, so a click here is already

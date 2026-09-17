@@ -6,7 +6,10 @@
 #
 # Nothing is hand-edited - the tag is the single source of truth for the
 # version (see firmware/extra_script.py), and this workflow refuses to
-# publish anything whose compiled version wouldn't be a clean x.y.z.
+# publish anything whose compiled version wouldn't be a clean x.y.z. The
+# release notes are the tag's own `-m "..."` message too - write a real one
+# when tagging and it shows up as-is on the release, no separate step or
+# GitHub-UI edit needed.
 #
 # Devices fetch .../releases/latest/download/manifest.json (see
 # firmware/src/core/ota.h). "latest" skips prereleases and drafts, so to
@@ -74,11 +77,28 @@ jobs:
             --out dist
           cat dist/manifest.json
 
+      # Release notes are just the annotated tag's own message (`git tag -a
+      # fw-vX.Y.Z -m "..."`) - one more thing that's never hand-edited after
+      # the fact. `generate_release_notes: true` below still appends its own
+      # "Full Changelog: prev...this" compare link underneath automatically;
+      # GitHub's actual "What's Changed" bullet list needs merged PRs to
+      # summarize, which this repo (plain pushes to master) doesn't have, so
+      # without this step the release body was ever only that bare link.
+      - name: Use the tag's own message as the release notes
+        id: notes
+        run: |
+          {
+            echo "body<<NOTES_EOF"
+            git tag -l --format='%(contents)' "${{ steps.ver.outputs.tag }}"
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Firmware ${{ steps.ver.outputs.version }}
+          body: ${{ steps.notes.outputs.body }}
           generate_release_notes: true
           files: |
             dist/firmware-${{ steps.ver.outputs.version }}.bin

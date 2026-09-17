@@ -49,8 +49,18 @@ public:
     // Serial.begin() - needs no network.
     void begin();
 
-    // Safe from request handlers - only set flags for loop() to act on.
-    void requestCheck() { checkRequested = true; }
+    // Safe from request handlers - only set flags for loop() to act on. The
+    // status write here is just a string (no network), safe to do
+    // synchronously - it exists so the config page's "Checking for
+    // updates..." page (which polls status() over /config) always sees an
+    // in-progress result starting the instant the button is clicked,
+    // rather than possibly polling once before loop() has even picked up
+    // checkRequested and briefly reading a stale leftover status from
+    // before this click as if it were already the new answer.
+    void requestCheck() {
+        checkRequested = true;
+        setStatus(false, "checking - queued...");
+    }
     // Returns false (and schedules nothing) if no update is currently
     // known - the page only shows the install button after a successful
     // check, but a scripted POST could still hit the route.
