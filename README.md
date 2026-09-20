@@ -26,10 +26,11 @@ on your desk.
   hours-to-a-day periods and 35,000+ km apogees display correctly, not just
   fast, close LEO passes.
 - **WiFi status at a glance** - a signal-bars icon (bottom-right) shows
-  whether the radio is actually connected, separate from the ONLINE/OFFLINE
-  indicator near the title (that one reflects whether the *last CelesTrak
-  fetch* succeeded - the two can disagree, e.g. WiFi's fine but CelesTrak is
-  temporarily rate-limiting).
+  actual link strength (0-4 bars, bucketed from RSSI; empty outline means
+  not connected), separate from the ONLINE/OFFLINE indicator near the title
+  (that one reflects whether the *last CelesTrak fetch* succeeded - the two
+  can disagree, e.g. WiFi's fine but CelesTrak is temporarily
+  rate-limiting).
 - **Scan to open the config page** - a small QR code sits right next to the
   WiFi icon while connected. No need to know the device's IP or dig through
   your router's client list - just scan it with a phone camera.
@@ -108,14 +109,14 @@ effect, same as before.
 - **Display full-refresh interval** - how often the e-paper redraws, in
   minutes (1-60, default 2). Takes effect immediately, no restart.
 - **Elements/launch-date fetch interval** - how often CelesTrak is polled,
-  in minutes (10-1440, default 1440/24h). Kept at a 10-minute floor to stay
+  in minutes (10-1440, default 120/2h). Kept at a 10-minute floor to stay
   well clear of CelesTrak's rate limit even at the most aggressive setting
   (see "Rate limits" below). Takes effect immediately, no restart. A failed
   fetch (a brief DNS/network blip, a transient CelesTrak error) retries
   after 2 minutes rather than waiting the full interval, up to 2 extra
   tries before falling back to the normal schedule - so a short outage
-  doesn't leave the display stuck on stale data for up to 24 hours at the
-  default setting.
+  doesn't leave the display stuck on stale data for the rest of the
+  interval.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
   reconnect (WiFi hostnames are set at connection time, not live).
 - **Update manifest URL** - advanced; leave it alone unless you're testing
@@ -184,8 +185,8 @@ not a fault.
 ### Rate limits
 
 The firmware is intentionally polite to both outside services it talks to -
-elements and the launch date are refetched once a day by default (this is
-the "Elements/launch-date fetch interval" config-page field, adjustable
+elements and the launch date are refetched every 2 hours by default (this
+is the "Elements/launch-date fetch interval" config-page field, adjustable
 10-1440 minutes), plus immediately whenever you change the tracked
 satellite, and never polled continuously.
 
@@ -311,7 +312,7 @@ boot  → WiFi → NTP → fetch orbital elements (CelesTrak) → init SGP4
       → compute apogee/perigee → best-effort name lookup (n2yo, optional)
 loop  → every 1s:  SGP4(now) → lat/lon → push to trail ring buffer → render()
       → every 2min (configurable): full e-paper redraw
-      → every 24h:  refetch elements
+      → every 2h (configurable): refetch elements
 ```
 
 - Orbital elements are fetched as OMM/CSV, not legacy TLE text - catalog

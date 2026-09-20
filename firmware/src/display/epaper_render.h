@@ -15,10 +15,13 @@ void epaperInit();
 // "Keep the demo and firmware renderers visually identical" convention.
 // launchDate/haveLaunchDate: time-in-space is hidden if haveLaunchDate is
 // false (launch-date fetch failed), matching the demo's `if age:` pattern.
-// wifiConnected: drives the WiFi signal-bars icon (bottom-right corner) -
+// wifiBars: drives the WiFi signal-bars icon (bottom-right corner), 0-4 -
 // separate from `online`, which reflects whether the last CelesTrak fetch
-// succeeded, not whether the radio is associated at all (the two can
-// disagree - e.g. WiFi fine but CelesTrak itself rate-limiting).
+// succeeded, not whether the radio is associated at all or how strong the
+// link is (these can all disagree - e.g. WiFi weak but CelesTrak itself
+// rate-limiting). 0 means not connected (all bars drawn outline-only, no
+// QR - see below); 1-4 is bucketed from RSSI dBm by wifiRssiToBars()
+// (core/wifi_setup.h), bars below the count filled, the rest outline-only.
 // configUrl: the live config-page address (e.g. "http://192.168.1.42/"),
 // drawn as a small QR code just left of the WiFi icon - see CLAUDE.md's
 // TODO for the on-device scan test that picked its size (25x25 physical
@@ -30,6 +33,6 @@ void epaperInit();
 // existing haveLaunchDate pattern for the "In space" column.
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate, bool wifiConnected,
+                   time_t launchDate, bool haveLaunchDate, int wifiBars,
                    const String& configUrl,
                    bool haveNextPassInfo, PassState passState, time_t passTime);

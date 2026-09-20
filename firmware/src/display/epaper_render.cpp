@@ -160,7 +160,7 @@ static void drawRocketIcon(int x, int y) {
 
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
-                   time_t launchDate, bool haveLaunchDate, bool wifiConnected,
+                   time_t launchDate, bool haveLaunchDate, int wifiBars,
                    const String& configUrl,
                    bool haveNextPassInfo, PassState passState, time_t passTime) {
     double sunDec, sunLon;
@@ -233,18 +233,18 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         display.setCursor((W - 20) - (int)bw, clockTy);
         display.print(clockStr);
 
-        // WiFi-connected signal, bottom-right corner of the whole canvas -
+        // WiFi signal-strength bars, bottom-right corner of the whole canvas -
         // separate from the ONLINE/OFFLINE dot above (see epaperRender()'s
-        // header comment for why they can disagree). Same signal-bars
-        // shape as the demo: filled = connected, outline-only = not.
-        const int wifiBars = 4, wifiBarW = 5, wifiBarGap = 3;
+        // header comment for why they can disagree). Same shape as the demo:
+        // bars below wifiBars filled, the rest outline-only.
+        const int wifiBarCount = 4, wifiBarW = 5, wifiBarGap = 3;
         const int wifiBaseX = W - 20, wifiBaseY = H - 10;
         {
-            for (int i = 0; i < wifiBars; i++) {
+            for (int i = 0; i < wifiBarCount; i++) {
                 int barH = 5 + i * 4;
-                int bx2 = wifiBaseX - (wifiBars - i) * (wifiBarW + wifiBarGap);
-                if (wifiConnected) display.fillRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
-                else                display.drawRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
+                int bx2 = wifiBaseX - (wifiBarCount - i) * (wifiBarW + wifiBarGap);
+                if (i < wifiBars) display.fillRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
+                else              display.drawRect(bx2, wifiBaseY - barH, wifiBarW, barH, GxEPD_BLACK);
             }
         }
 
@@ -262,7 +262,7 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
         // that math assumes. Version 2 (25x25 modules) because version 1's
         // byte-mode capacity (17 bytes at LOW ECC) is too small for a full
         // "http://<ip>/" string (~22 bytes); version 2's 32 bytes fits.
-        if (wifiConnected) {
+        if (wifiBars > 0) {
             const uint8_t qrVersion = 2;
             const int qrPxPerModule = 1;
             QRCode qrcode;
@@ -270,7 +270,7 @@ void epaperRender(Sgp4Track& track, const OrbitalElements& el,
             qrcode_initText(&qrcode, qrcodeData, qrVersion, ECC_LOW, configUrl.c_str());
 
             int codeSize = qrPxPerModule * qrcode.size;
-            int wifiIconLeft = wifiBaseX - wifiBars * (wifiBarW + wifiBarGap);
+            int wifiIconLeft = wifiBaseX - wifiBarCount * (wifiBarW + wifiBarGap);
             int qrRight = wifiIconLeft - 10;   // gap between the QR and the WiFi icon
             int x0 = qrRight - codeSize, y0 = wifiBaseY - codeSize;   // shares the WiFi icon's baseline
 

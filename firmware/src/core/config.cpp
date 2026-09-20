@@ -16,7 +16,7 @@ void ConfigStore::begin() {
     current.n2yoApiKey = prefs.getString("n2yoKey", "");
     current.hostname   = prefs.getString("hostname", "sattrackerbuddy");
     current.displayRefreshMinutes = prefs.getInt("refreshMin", 2);
-    current.elementsFetchMinutes  = prefs.getInt("fetchMin", 1440);
+    current.elementsFetchMinutes  = prefs.getInt("fetchMin", 120);
     current.otaManifestUrl = prefs.getString("otaUrl", OTA_DEFAULT_MANIFEST_URL);
     if (current.otaManifestUrl.length() == 0) current.otaManifestUrl = OTA_DEFAULT_MANIFEST_URL;
     prefs.end();

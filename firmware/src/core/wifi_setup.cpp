@@ -5,6 +5,13 @@
 
 WiFiSetup wifiSetup;
 
+int wifiRssiToBars(int rssi) {
+    if (rssi >= -55) return 4;
+    if (rssi >= -65) return 3;
+    if (rssi >= -75) return 2;
+    return 1;
+}
+
 static const char* AP_SSID = "SatelliteTrackerBuddy-Setup";
 static const byte DNS_PORT = 53;
 static const int MAX_SCAN_RESULTS = 64;   // plenty for any real-world scan; just a stack-array cap

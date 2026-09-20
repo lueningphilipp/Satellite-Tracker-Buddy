@@ -359,21 +359,25 @@ class EPaper:               # 7.5" 800x480 e-ink, full refresh every 5 min
         clock = font.render(now.strftime("LIVE %H:%M:%S UTC"), True, (0,0,0))
         scr.blit(clock, (x1-clock.get_width(), ty+28))
 
-        # WiFi-connected signal, bottom-right corner of the frame - distinct
-        # from the ONLINE/OFFLINE dot above (that one reflects whether the
-        # last CelesTrak fetch succeeded, not whether the radio is
-        # associated at all - the two can disagree, e.g. WiFi is fine but
-        # CelesTrak itself is rate-limiting). The demo has no real radio to
-        # check, so it's always drawn connected; firmware wires the same
-        # icon to WiFi.status() == WL_CONNECTED.
+        # WiFi signal-strength bars, bottom-right corner of the frame -
+        # distinct from the ONLINE/OFFLINE dot above (that one reflects
+        # whether the last CelesTrak fetch succeeded, not whether the radio
+        # is associated at all, let alone how strong the link is - these can
+        # all disagree, e.g. WiFi weak but CelesTrak itself rate-limiting).
+        # Bar count (0-4) is bucketed from RSSI dBm, same thresholds as
+        # firmware's wifiRssiToBars() (core/wifi_setup.cpp) - bars below the
+        # count are filled, the rest outline-only. The demo has no real
+        # radio to sample RSSI from, so it always shows full bars when
+        # "connected"; firmware derives the real count from WiFi.RSSI().
         wifi_connected = True
+        wifi_bars = 4 if wifi_connected else 0
         bars, bw, gap = 4, 5, 3
         base_y = 30 + s.H - 10
         for i in range(bars):
             bar_h = 5 + i*4
             bx = x1 - (bars - i) * (bw + gap)
             rect = (bx, base_y - bar_h, bw, bar_h)
-            pygame.draw.rect(scr, (0,0,0), rect, 0 if wifi_connected else 1)
+            pygame.draw.rect(scr, (0,0,0), rect, 0 if i < wifi_bars else 1)
     def render(s, sat, now, sun):
         surf = pygame.Surface((s.W, s.H)); surf.fill((250, 250, 250))
         mw, mh = s.W, s.MH

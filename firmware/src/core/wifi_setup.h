@@ -57,3 +57,10 @@ private:
 };
 
 extern WiFiSetup wifiSetup;
+
+// Buckets an RSSI reading (dBm, e.g. from WiFi.RSSI()) into the 1-4 bar
+// count the epaper renderer's WiFi icon draws (see epaper_render.h's
+// wifiBars param) - 4 excellent, 1 barely-there, matching typical ESP32
+// RSSI ranges. Only meaningful while actually connected; callers pass 0
+// directly (not through this function) when WiFi.status() != WL_CONNECTED.
+int wifiRssiToBars(int rssi);

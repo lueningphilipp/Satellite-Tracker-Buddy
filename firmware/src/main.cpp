@@ -447,9 +447,10 @@ void loop() {
         lastRenderMs = nowMs;
         forceRenderNow = false;
         Serial.println("Rendering e-paper...");
+        int wifiBars = (WiFi.status() == WL_CONNECTED) ? wifiRssiToBars(WiFi.RSSI()) : 0;
         epaperRender(satTrack, lastElements, trail, time(nullptr), online,
                      haveLaunchDate ? launchDate : (time_t)0, haveLaunchDate,
-                     WiFi.status() == WL_CONNECTED,
+                     wifiBars,
                      "http://" + WiFi.localIP().toString() + "/",
                      haveNextPassInfo, nextPassState, nextPassTime);
         Serial.println("Render done");
