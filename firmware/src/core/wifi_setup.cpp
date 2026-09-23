@@ -102,8 +102,33 @@ static String buildSetupPage() {
     return page;
 }
 
+// Last STA disconnect reason code (esp_wifi_types.h wifi_err_reason_t),
+// captured from the event task - the only place the driver says *why* a join
+// failed (WiFi.status() alone can't tell a wrong password from a missing AP).
+static volatile uint8_t lastDisconnectReason = 0;
+
+static String describeDisconnect(uint8_t reason) {
+    switch (reason) {
+        case 201: return "network not found";                    // NO_AP_FOUND
+        case 2: case 15: case 202: case 204:                     // AUTH_EXPIRE, 4WAY/HANDSHAKE_TIMEOUT, AUTH_FAIL
+            return "wrong password?";
+        case 0:   return "timed out";
+        default:  return "error " + String(reason);
+    }
+}
+
 bool WiFiSetup::connect(DeviceConfig& config, uint32_t timeoutMs) {
+    connectError = "";
     if (config.wifiSsid.length() == 0) return false;
+
+    static bool eventRegistered = false;
+    if (!eventRegistered) {
+        eventRegistered = true;
+        WiFi.onEvent([](arduino_event_t* ev) {
+            lastDisconnectReason = ev->event_info.wifi_sta_disconnected.reason;
+        }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    }
+    lastDisconnectReason = 0;
 
     WiFi.mode(WIFI_STA);
     // Must be set after mode(WIFI_STA) but before begin() - the ESP32
@@ -117,13 +142,24 @@ bool WiFiSetup::connect(DeviceConfig& config, uint32_t timeoutMs) {
     while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
         delay(250);
     }
-    return WiFi.status() == WL_CONNECTED;
+    if (WiFi.status() == WL_CONNECTED) return true;
+    connectError = describeDisconnect(lastDisconnectReason);
+    Serial.printf("WiFi join of \"%s\" failed: %s (status %d, reason %u)\n",
+                  config.wifiSsid.c_str(), connectError.c_str(),
+                  (int)WiFi.status(), (unsigned)lastDisconnectReason);
+    return false;
 }
 
 void WiFiSetup::runCaptivePortal(ConfigStore& store) {
     // AP_STA (not plain AP) so the radio can still scan for nearby networks
     // while the softAP is up - the scan needs STA mode active, and dropping
     // AP mode to get it would kick anyone already connected to the portal.
+    //
+    // Drop any in-flight join first: after a failed connect() the STA keeps
+    // retrying in the background, and scanNetworks() fails outright while
+    // it does - which left the portal's "nearby networks" list empty.
+    WiFi.disconnect(true);
+    delay(100);
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID);
     IPAddress apIP = WiFi.softAPIP();
@@ -132,7 +168,13 @@ void WiFiSetup::runCaptivePortal(ConfigStore& store) {
     // panel just stays blank until WiFi is configured. Full e-paper refresh
     // (~3s) happens here, before the server starts, so it can't hold up or
     // race a request handler (see the async_tcp gotcha in CLAUDE.md).
-    epaperRenderSetup(AP_SSID, apIP.toString());
+    // Only mention a failed join if creds are actually stored (the BOOT-reset
+    // path clears them first, and any stale error from a later reconnect
+    // attempt shouldn't show then).
+    String failNote;
+    if (store.current.wifiSsid.length() && connectError.length())
+        failNote = "Could not join \"" + store.current.wifiSsid + "\" (" + connectError + ").";
+    epaperRenderSetup(AP_SSID, apIP.toString(), failNote);
 
     // One scan up front, baked into the page once - good enough for a
     // one-time setup screen; a network that appears after the portal's

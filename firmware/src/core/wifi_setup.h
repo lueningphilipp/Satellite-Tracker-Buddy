@@ -22,6 +22,12 @@ public:
     // immediately false if no creds are stored at all).
     bool connect(DeviceConfig& config, uint32_t timeoutMs = 15000);
 
+    // Human-readable reason the last connect() failed ("wrong password?",
+    // "network not found", ...), empty if it succeeded or was never
+    // attempted. Shown on the setup screen so a bad password/SSID isn't a
+    // silent bounce back to the portal.
+    String lastConnectError() const { return connectError; }
+
     // Opens "SatelliteTrackerBuddy-Setup" AP + captive portal, serves a WiFi setup page,
     // saves whatever the user submits to NVS, then restarts the device.
     // Never returns (ESP.restart() at the end).
@@ -54,6 +60,7 @@ public:
 
 private:
     String cachedOptions;
+    String connectError;
 };
 
 extern WiFiSetup wifiSetup;

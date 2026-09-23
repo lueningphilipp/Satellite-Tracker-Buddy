@@ -8,6 +8,16 @@
 // One-time GxEPD2 + SPI init. Call once from setup().
 void epaperInit();
 
+// "No WiFi yet" instruction screen, shown while the captive portal is open
+// (first boot, or after the BOOT-button WiFi reset, or a stored network that
+// can't be joined). Numbered steps on the left, a scan-to-join-the-AP QR on
+// the right. apSsid/apIp are the portal's own values (see
+// WiFiSetup::runCaptivePortal) so the text can never drift from what the
+// device actually opened. Firmware-only - the PC demo has no WiFi to mirror.
+// failNote (optional): replaces the subtitle when a stored network could not
+// be joined, e.g. `Could not join "Home" (wrong password?).`.
+void epaperRenderSetup(const char* apSsid, const String& apIp, const String& failNote);
+
 // Full-refresh render: map + land + night shading + past(dashed)/future(solid)
 // track + "you are here" reticle + name/orbit-class title + apogee/perigee/
 // incl/period/time-in-space info row + refresh-time clock/online status row.
@@ -31,14 +41,6 @@ void epaperInit();
 // core/pass_predict.h) - the whole "Next pass" column is hidden if
 // haveNextPassInfo is false (no site lat/lon configured), matching the
 // existing haveLaunchDate pattern for the "In space" column.
-// "No WiFi yet" instruction screen, shown while the captive portal is open
-// (first boot, or after the BOOT-button WiFi reset, or a stored network that
-// can't be joined). Numbered steps on the left, a scan-to-join-the-AP QR on
-// the right. apSsid/apIp are the portal's own values (see
-// WiFiSetup::runCaptivePortal) so the text can never drift from what the
-// device actually opened. Firmware-only - the PC demo has no WiFi to mirror.
-void epaperRenderSetup(const char* apSsid, const String& apIp);
-
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
                    time_t launchDate, bool haveLaunchDate, int wifiBars,

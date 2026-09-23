@@ -160,7 +160,7 @@ static void drawRocketIcon(int x, int y) {
     display.fillTriangle(x - 2, y + 6, x + 2, y + 6, x, y + 11, GxEPD_BLACK);     // single engine nozzle, between the fins
 }
 
-void epaperRenderSetup(const char* apSsid, const String& apIp) {
+void epaperRenderSetup(const char* apSsid, const String& apIp, const String& failNote) {
     // WiFi-join QR ("WIFI:" payload, understood by iOS/Android camera apps).
     // The portal AP is open, hence T:nopass. Version 3 (29x29 modules) at
     // 4px/module: version 2's 32-byte capacity is too small for the
@@ -184,7 +184,12 @@ void epaperRenderSetup(const char* apSsid, const String& apIp) {
         display.print("WiFi setup needed");
         display.setFont(&FreeSans12pt7b);
         display.setCursor(40, 105);
-        display.print("No WiFi connected yet - set it up in 4 steps:");
+        if (failNote.length()) {
+            display.setFont(&FreeSansBold12pt7b);
+            display.print(failNote);
+        } else {
+            display.print("No WiFi connected yet - set it up in 4 steps:");
+        }
         display.drawFastHLine(40, 125, W - 80, GxEPD_BLACK);
         display.drawFastHLine(40, 126, W - 80, GxEPD_BLACK);
 
