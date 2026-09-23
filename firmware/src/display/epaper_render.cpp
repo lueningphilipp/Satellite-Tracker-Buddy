@@ -4,6 +4,8 @@
 #include "land_mask.h"
 #include <SPI.h>
 #include <GxEPD2_BW.h>
+#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSans12pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
@@ -156,6 +158,98 @@ static void drawRocketIcon(int x, int y) {
     display.fillTriangle(x - 3, y + 2, x - 3, y + 6, x - 7, y + 8, GxEPD_BLACK);  // left fin, splayed out
     display.fillTriangle(x + 3, y + 2, x + 3, y + 6, x + 7, y + 8, GxEPD_BLACK);  // right fin, splayed out
     display.fillTriangle(x - 2, y + 6, x + 2, y + 6, x, y + 11, GxEPD_BLACK);     // single engine nozzle, between the fins
+}
+
+void epaperRenderSetup(const char* apSsid, const String& apIp) {
+    // WiFi-join QR ("WIFI:" payload, understood by iOS/Android camera apps).
+    // The portal AP is open, hence T:nopass. Version 3 (29x29 modules) at
+    // 4px/module: version 2's 32-byte capacity is too small for the
+    // ~45-byte payload, and this screen has the room to draw it big.
+    String wifiPayload = String("WIFI:T:nopass;S:") + apSsid + ";;";
+    const uint8_t qrVersion = 3;
+    const int qrPxPerModule = 4;
+    QRCode qrcode;
+    uint8_t qrcodeData[qrcode_getBufferSize(qrVersion)];
+    qrcode_initText(&qrcode, qrcodeData, qrVersion, ECC_LOW, wifiPayload.c_str());
+    int codeSize = qrPxPerModule * qrcode.size;
+
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+
+        display.setFont(&FreeSansBold18pt7b);
+        display.setCursor(40, 65);
+        display.print("WiFi setup needed");
+        display.setFont(&FreeSans12pt7b);
+        display.setCursor(40, 105);
+        display.print("No WiFi connected yet - set it up in 4 steps:");
+        display.drawFastHLine(40, 125, W - 80, GxEPD_BLACK);
+        display.drawFastHLine(40, 126, W - 80, GxEPD_BLACK);
+
+        // Steps: number in bold, text in regular, continuation lines
+        // indented under the text. Line breaks are hand-picked to stay left
+        // of the QR column (x >= ~590) at 12pt.
+        const int numX = 40, textX = 75, lineH = 30, stepGap = 22;
+        int y = 175;
+        auto step = [&](const char* num, const char* l1, const char* l2,
+                        bool l2Bold) {
+            display.setFont(&FreeSansBold12pt7b);
+            display.setCursor(numX, y);
+            display.print(num);
+            display.setFont(&FreeSans12pt7b);
+            display.setCursor(textX, y);
+            display.print(l1);
+            if (l2) {
+                y += lineH;
+                display.setFont(l2Bold ? &FreeSansBold12pt7b : &FreeSans12pt7b);
+                display.setCursor(textX, y);
+                display.print(l2);
+            }
+            y += lineH + stepGap;
+        };
+        step("1.", "On your phone or PC, join the WiFi network:", apSsid, true);
+        // Step 2's second line mixes regular + bold (the URL), which the
+        // helper can't express, so it's drawn by hand.
+        display.setFont(&FreeSansBold12pt7b);
+        display.setCursor(numX, y);
+        display.print("2.");
+        display.setFont(&FreeSans12pt7b);
+        display.setCursor(textX, y);
+        display.print("A setup page opens by itself. If it doesn't,");
+        y += lineH;
+        display.setCursor(textX, y);
+        display.print("open ");
+        display.setFont(&FreeSansBold12pt7b);
+        display.print("http://");
+        display.print(apIp);
+        display.print("/");
+        y += lineH + stepGap;
+        step("3.", "Pick your home WiFi, enter its password", "and tap Save.", false);
+        step("4.", "The tracker restarts and shows the satellite.", nullptr, false);
+
+        // QR column, right side, vertically centred on the steps area.
+        int qrX = W - 40 - codeSize, qrY = 175;
+        for (uint8_t my = 0; my < qrcode.size; my++) {
+            for (uint8_t mx = 0; mx < qrcode.size; mx++) {
+                if (qrcode_getModule(&qrcode, mx, my)) {
+                    display.fillRect(qrX + mx * qrPxPerModule, qrY + my * qrPxPerModule,
+                                      qrPxPerModule, qrPxPerModule, GxEPD_BLACK);
+                }
+            }
+        }
+        display.setFont(&FreeSans9pt7b);
+        const char* cap1 = "Scan to join";
+        const char* cap2 = "the setup WiFi";
+        int16_t cbx, cby; uint16_t cbw, cbh;
+        display.getTextBounds(cap1, 0, 0, &cbx, &cby, &cbw, &cbh);
+        display.setCursor(qrX + (codeSize - (int)cbw) / 2, qrY + codeSize + 24);
+        display.print(cap1);
+        display.getTextBounds(cap2, 0, 0, &cbx, &cby, &cbw, &cbh);
+        display.setCursor(qrX + (codeSize - (int)cbw) / 2, qrY + codeSize + 46);
+        display.print(cap2);
+    } while (display.nextPage());
 }
 
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,

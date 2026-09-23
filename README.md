@@ -166,7 +166,11 @@ Hold the board's **BOOT** button (built into every ESP32 dev board, no
 extra wiring) for **3 seconds while the device is already running** (not
 while powering it on - see the warning below). It blinks the onboard LED
 5 times to confirm, forgets the stored WiFi network, and reopens the
-`SatelliteTrackerBuddy-Setup` portal - same flow as first boot.
+`SatelliteTrackerBuddy-Setup` portal - same flow as first boot. While the
+portal is open (first boot, WiFi reset, or a stored network that can't be
+joined) the display shows a short "WiFi setup needed" instruction screen -
+the steps to follow plus a QR code that joins the setup network when scanned
+with a phone camera - so you never stare at a blank panel wondering what to do.
 
 > **Don't hold BOOT while powering the device on.** GPIO0 (the BOOT button)
 > doubles as the ESP32's boot-mode strapping pin - holding it low at the

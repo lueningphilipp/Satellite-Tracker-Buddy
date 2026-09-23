@@ -1,4 +1,5 @@
 #include "wifi_setup.h"
+#include "../display/epaper_render.h"   // epaperRenderSetup(): on-panel setup instructions
 #include <WiFi.h>
 #include <DNSServer.h>
 #include <ESPAsyncWebServer.h>
@@ -126,6 +127,12 @@ void WiFiSetup::runCaptivePortal(ConfigStore& store) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID);
     IPAddress apIP = WiFi.softAPIP();
+
+    // Tell whoever is looking at the device what to do - without this the
+    // panel just stays blank until WiFi is configured. Full e-paper refresh
+    // (~3s) happens here, before the server starts, so it can't hold up or
+    // race a request handler (see the async_tcp gotcha in CLAUDE.md).
+    epaperRenderSetup(AP_SSID, apIP.toString());
 
     // One scan up front, baked into the page once - good enough for a
     // one-time setup screen; a network that appears after the portal's
