@@ -207,6 +207,11 @@ FetchResult fetchN2yoName(const String& noradId, const String& apiKey, String& o
     return FetchResult::Ok;
 }
 
+time_t elementsEpochUnix(const OrbitalElements& el) {
+    return unixFromYMD(el.epochYear, el.epochMonth, el.epochDay)
+         + (time_t)el.epochHour * 3600 + (time_t)el.epochMin * 60 + (time_t)el.epochSec;
+}
+
 OrbitalElements fallbackElements() {
     // Same snapshot as the demo's FALLBACK_OMM (sat_display_demo.py) - kept
     // in sync manually since it's a frozen historical value, not something

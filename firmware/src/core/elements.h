@@ -21,6 +21,17 @@ struct OrbitalElements {
     double bstar = 0;
 };
 
+// Elements older than this are no longer trusted once a fetch has failed -
+// SGP4 error grows with element age (km/day for LEO), so past a week the
+// device drops back to the (also stale, but at least flagged) ISS fallback
+// instead of showing ever-less-accurate data unnoticed. Only applied while
+// the last fetch failed: a *successful* fetch of old elements (e.g. a dead
+// satellite CelesTrak simply hasn't updated) is shown as-is.
+static const long ELEMENTS_MAX_AGE_DAYS = 7;
+
+// Epoch of `el` as unix time (UTC).
+time_t elementsEpochUnix(const OrbitalElements& el);
+
 // All three fetchers below make exactly ONE attempt and classify the outcome
 // (see core/retry.h) - retrying/scheduling is the caller's job, identical for
 // every fetcher. `errOut`, if given, is always set to a short human-readable

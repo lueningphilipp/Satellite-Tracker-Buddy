@@ -111,12 +111,8 @@ effect, same as before.
 - **Elements/launch-date fetch interval** - how often CelesTrak is polled,
   in minutes (10-1440, default 120/2h). Kept at a 10-minute floor to stay
   well clear of CelesTrak's rate limit even at the most aggressive setting
-  (see "Rate limits" below). Takes effect immediately, no restart. A failed
-  fetch (a brief DNS/network blip, a transient CelesTrak error) retries
-  after 2 minutes rather than waiting the full interval, up to 2 extra
-  tries before falling back to the normal schedule - so a short outage
-  doesn't leave the display stuck on stale data for the rest of the
-  interval.
+  (see "Rate limits" below). Takes effect immediately, no restart. See
+  "When a fetch fails" below for what happens if a fetch doesn't work.
 - **Device hostname** - shown to your router/DHCP. Takes effect on the next
   reconnect (WiFi hostnames are set at connection time, not live).
 - **Update manifest URL** - advanced; leave it alone unless you're testing
@@ -186,6 +182,31 @@ Full refresh every 2 minutes by default (configurable, see above) - each
 refresh takes ~2.6s and visibly flashes, which is normal e-paper behavior,
 not a fault.
 
+### When a fetch fails
+
+All three lookups (CelesTrak elements, CelesTrak launch date, n2yo name)
+follow the same rule: one attempt, then - only for failures that can clear up
+on their own (a network/DNS blip, HTTP 408/429/5xx) - up to 2 retries, 2
+minutes apart. After that it stops until the next scheduled fetch. Errors
+that would fail the same way every time (an unknown NORAD id, HTTP 403/404,
+an unparseable reply, a bad n2yo key) are never retried. The config page's
+status panel shows where it is, e.g. `network error - retry 1/2 in 2 min`.
+
+- **Elements** are re-fetched every "Elements/launch-date fetch interval".
+  The launch date and n2yo name are only looked up after a successful
+  elements fetch, and only if not already known for that satellite - a
+  launch date never changes, so it isn't re-requested every cycle.
+- **If elements can't be fetched**, the device keeps showing the last good
+  elements for the satellite you chose (dot shows OFFLINE) rather than
+  swapping to the ISS or wiping the trail - for up to 7 days. Older than
+  that, or if there was never a successful fetch for the chosen object, it
+  shows the built-in ISS snapshot, labelled "(fallback)".
+- **If WiFi drops**, nothing is attempted and nothing counts as a failure.
+  As soon as the connection is back, any fetch that had failed (or was
+  overdue) runs again right away.
+- **Saving the config page** re-fetches everything with a fresh set of
+  attempts, and redraws when done.
+
 ### Rate limits
 
 The firmware is intentionally polite to both outside services it talks to -
@@ -197,17 +218,20 @@ satellite, and never polled continuously.
 - **CelesTrak** (orbital elements, launch date): no API key needed, but
   their [usage policy](https://celestrak.org/usage-policy.php) firewalls an
   IP after 50 HTTP error responses (403/404/301/50x) within a 2-hour
-  window. Normal use - about one fetch a day, plus the occasional satellite
-  change - stays nowhere near that. Even at the fetch interval's minimum
-  10-minute setting, that's at most 24 requests/2h (2 requests per fetch,
-  elements + launch date) - still well under the 50-error threshold. If the
+  window. Normal use - a fetch every couple of hours, plus the occasional
+  satellite change - stays nowhere near that. Even at the fetch interval's
+  minimum 10-minute setting, a healthy device makes at most 12 requests/2h
+  (the launch date is only re-requested when the satellite changes), and a
+  persistent CelesTrak failure costs at most 3 (one attempt + 2 retries)
+  per interval, 36/2h - still under the 50-error threshold. Permanent
+  errors like a mistyped NORAD id are not retried at all. If the
   config page ever shows "HTTP 403", it clears on its own after a while;
   the device keeps tracking on its last-known (stale) data in the
   meantime, marked OFFLINE.
 - **n2yo** (optional name lookup): the free tier allows up to 1000
-  requests/hour. The firmware makes at most one n2yo call per satellite
-  selection/refetch - far under that limit even with frequent manual
-  satellite changes or the fetch interval set to its minimum.
+  requests/hour. The firmware looks the name up once per satellite
+  selection or config save (plus at most 2 retries on a network error) -
+  far under that limit even with frequent manual satellite changes.
 
 ## Building the hardware
 

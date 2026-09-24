@@ -246,11 +246,11 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
 
     // Server-side fallback for the "Use my location" button - see
     // core/geoip.h for why (many browsers block the Geolocation JS API on
-    // this device's plain-HTTP origin). A blocking HTTPClient GET, same as
-    // the elements/launch-date/n2yo fetches already called safely from
-    // request handlers elsewhere on this page - a plain HTTP GET isn't the
-    // class of call (WiFi.scanNetworks(), a tight CPU loop) that's actually
-    // unsafe there, see CLAUDE.md's TODO.
+    // this device's plain-HTTP origin). A single blocking HTTPClient GET
+    // (bounded by HTTPClient's own timeout) - unlike WiFi.scanNetworks() or a
+    // tight CPU loop, that hasn't been a problem on this task. The elements/
+    // launch-date/n2yo fetches, which are several such calls back to back
+    // plus retries, do NOT run from handlers - see main.cpp's onConfigSaved().
     server.on("/geoip", HTTP_GET, [](AsyncWebServerRequest* req) {
         float lat, lon;
         String err;

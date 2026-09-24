@@ -42,9 +42,12 @@ public:
         armed_ = true;
         dueAtMs_ = nowMs + delayMs;
         retriesUsed_ = 0;
+        failed_ = false;
     }
 
-    // Cancels any pending attempt.
+    // Cancels any pending attempt. Deliberately leaves failed_ alone - a job
+    // that gave up on a transient error should still be revived by
+    // onNetworkRestored().
     void disarm() { armed_ = false; }
 
     bool armed() const { return armed_; }
@@ -59,7 +62,8 @@ public:
     // or retries exhausted); 0 makes it a one-shot job that disarms instead.
     // Returns true if a retry was scheduled (retriesUsed() is then 1..MAX).
     bool report(FetchResult r, unsigned long nowMs, unsigned long normalDelayMs) {
-        if (r == FetchResult::Transient && retriesUsed_ < MAX_RETRIES) {
+        failed_ = (r == FetchResult::Transient);
+        if (failed_ && retriesUsed_ < MAX_RETRIES) {
             retriesUsed_++;
             dueAtMs_ = nowMs + RETRY_DELAY_MS;
             armed_ = true;
@@ -76,10 +80,20 @@ public:
         return false;
     }
 
+    // WiFi just came back: a job whose last attempt failed transiently (still
+    // waiting on a retry, or having given up until its next scheduled run)
+    // gets a fresh budget and runs immediately - the failure was very likely
+    // the outage itself. Jobs that succeeded, or failed permanently, are left
+    // on their normal schedule.
+    void onNetworkRestored(unsigned long nowMs) {
+        if (failed_) arm(nowMs);
+    }
+
     int retriesUsed() const { return retriesUsed_; }
 
 private:
     bool armed_ = false;
+    bool failed_ = false;
     int retriesUsed_ = 0;
     unsigned long dueAtMs_ = 0;
 };

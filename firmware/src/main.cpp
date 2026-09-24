@@ -34,8 +34,12 @@ time_t launchDate = 0;
 bool haveLaunchDate = false;   // launchDate is known AND belongs to the object currently shown
 
 // True while the displayed elements are the hardcoded ISS snapshot rather
-// than something fetched live.
+// than something fetched live. See applyFallbackIfNeeded().
 static bool shownIsFallback = false;
+// Outcome of the most recent elements attempt - the OTA health check needs to
+// tell "CelesTrak answered with an error" (Permanent, or an HTTP status) from
+// "the connection itself failed" (Transient, no status).
+static FetchResult lastElementsResult = FetchResult::Transient;
 
 // Per-NORAD-id caches for the two "enrichment" lookups. A satellite's launch
 // date never changes and its n2yo name only rarely does, so once known
@@ -70,10 +74,16 @@ static unsigned long lastRenderMs = 0;
 //   n2yo name    object's value isn't cached yet. Once they've given up they
 //                wait for the next elements success to try again.
 //
-// All network I/O runs through serviceFetchJobs().
+// All network I/O runs from loop() only (serviceFetchJobs) - never from a
+// request handler, see the async_tcp gotcha.
 static FetchJob elementsJob;
 static FetchJob launchDateJob;
 static FetchJob n2yoJob;
+// Set by the config page's save handler (async_tcp task) - loop() acts on it.
+static volatile bool refetchRequested = false;
+// Edge detector so a WiFi outage's failed jobs get retried right after the
+// link comes back instead of waiting out their normal schedule.
+static bool wifiWasUp = true;
 static unsigned long lastWifiScanMs = 0;
 static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 // WiFi.begin() is only ever called from setup() and the captive-portal flow
@@ -216,6 +226,25 @@ static bool applyElements(OrbitalElements el, bool isFallback) {
     return true;
 }
 
+// What to show while the last elements fetch has failed (`online` false).
+// Keeps the last good elements when they're for the requested object and
+// under ELEMENTS_MAX_AGE_DAYS old - a brief outage shouldn't swap the
+// tracked satellite for the ISS or wipe the trail - and only otherwise drops
+// to the hardcoded ISS snapshot (nothing usable yet, the user just switched
+// to an object we have no data for, or the data is too old to trust).
+// Called right after a failed fetch and once a second, so the age limit also
+// bites during a long outage when no fetch is being attempted at all.
+static void applyFallbackIfNeeded() {
+    if (online || shownIsFallback) return;
+    bool sameObject = lastElements.noradCatId != 0
+                       && lastElements.noradCatId == config.current.noradId.toInt();
+    double ageDays = difftime(time(nullptr), elementsEpochUnix(lastElements)) / 86400.0;
+    if (sameObject && ageDays <= ELEMENTS_MAX_AGE_DAYS) return;
+    Serial.printf("Elements unusable (%s) - showing stale fallback (ISS)\n",
+                  sameObject ? "too old" : "none for the requested object");
+    applyElements(fallbackElements(), true);
+}
+
 // Appends the retry outlook to a status string, e.g. "network error - retry
 // 1/2 in 2 min" - shown on the config page so an in-progress retry doesn't
 // look like a dead end. Permanent errors (HTTP 404, ...) get no suffix.
@@ -236,11 +265,12 @@ static void runElementsJob() {
     unsigned long intervalMs = (unsigned long)config.current.elementsFetchMinutes * 60UL * 1000UL;
     bool retrying = elementsJob.report(r, millis(), intervalMs);
     noteRetry(connStatus.elementsStatus, r, retrying, elementsJob);
+    lastElementsResult = r;
     online = (r == FetchResult::Ok);
 
     if (!online) {
         Serial.printf("Elements fetch failed (%s)\n", connStatus.elementsStatus.c_str());
-        applyElements(fallbackElements(), true);
+        applyFallbackIfNeeded();
         return;
     }
 
@@ -307,7 +337,14 @@ static void runN2yoJob() {
 // right after) and returns whether it did. Callers drain it with
 // `while (serviceFetchJobs()) {}` - every job reschedules itself into the
 // future (or disarms) after running, so that always terminates.
+//
+// While WiFi is down nothing runs and nothing is counted as a failure: the
+// jobs simply stay due, and the network-restored edge in loop() revives any
+// that had already failed. Otherwise an outage would burn the whole retry
+// budget in its first 4 minutes and then leave the device waiting out a
+// full elementsFetchMinutes after the link came back.
 static bool serviceFetchJobs() {
+    if (WiFi.status() != WL_CONNECTED) return false;
     unsigned long now = millis();
     if (elementsJob.due(now))   { runElementsJob();   return true; }
     if (launchDateJob.due(now)) { runLaunchDateJob(); return true; }
@@ -315,18 +352,15 @@ static bool serviceFetchJobs() {
     return false;
 }
 
-// The config page's onConfigSaved callback: a fresh retry budget, re-ask n2yo
-// too (the name may have improved), and redraw as soon as the whole chain has
-// finished. Launch date stays cached - it never changes - and is only re-armed
-// by the elements job if the object is different.
+// The config page's onConfigSaved callback. It runs on the async_tcp task,
+// so it must not do the fetches itself (each is a blocking HTTPS call - the
+// same watchdog risk as WiFi.scanNetworks()/findNextPass(), see CLAUDE.md's
+// Known gotchas): it only raises a flag, and loop() runs the refetch and
+// then redraws immediately. A save is something the user is actively
+// watching for a result from, unlike the quiet scheduled refetch, which
+// doesn't force an extra visible e-paper flash.
 static void onConfigSaved() {
-    n2yoNameNorad = 0;
-    n2yoNameCache = "";
-    launchDateJob.disarm();
-    n2yoJob.disarm();
-    elementsJob.arm(millis());
-    while (serviceFetchJobs()) {}
-    forceRenderNow = true;
+    refetchRequested = true;
 }
 
 void setup() {
@@ -418,6 +452,7 @@ void loop() {
 
     if (nowMs - lastSampleMs >= 1000) {
         lastSampleMs = nowMs;
+        applyFallbackIfNeeded();   // no-op unless the last fetch failed - see its comment
         time_t t = time(nullptr);
         SatPosition pos = satTrack.positionAt(t);
         if (pos.valid) {
@@ -427,6 +462,32 @@ void loop() {
         } else {
             Serial.println("propagation error");
         }
+    }
+
+    // WiFi came back after an outage: jobs that failed (or gave up) get a
+    // fresh retry budget and run right away - see serviceFetchJobs().
+    bool wifiUpNow = WiFi.status() == WL_CONNECTED;
+    if (wifiUpNow && !wifiWasUp) {
+        Serial.println("WiFi restored - retrying any failed fetches now");
+        elementsJob.onNetworkRestored(nowMs);
+        launchDateJob.onNetworkRestored(nowMs);
+        n2yoJob.onNetworkRestored(nowMs);
+    }
+    wifiWasUp = wifiUpNow;
+
+    // A config-page save (see onConfigSaved()): fresh retry budget, re-ask
+    // n2yo too (the name may have improved), and redraw as soon as the whole
+    // chain has finished. Launch date stays cached - it never changes - and
+    // is only re-armed by the elements job if the object is different.
+    if (refetchRequested) {
+        refetchRequested = false;
+        n2yoNameNorad = 0;
+        n2yoNameCache = "";
+        launchDateJob.disarm();
+        n2yoJob.disarm();
+        elementsJob.arm(millis());
+        while (serviceFetchJobs()) {}
+        forceRenderNow = true;
     }
 
     // Scheduled fetches. The elements interval is read live from config when
@@ -498,7 +559,10 @@ void loop() {
     // back. Only a connection/TLS-level failure ("network error") or no
     // fetch at all keeps it unhealthy.
     bool wifiUp = WiFi.status() == WL_CONNECTED;
-    bool networkHealthy = wifiUp && (online || connStatus.elementsStatus.startsWith("HTTP "));
+    bool gotRealResponse = online
+                           || connStatus.elementsStatus.startsWith("HTTP ")
+                           || lastElementsResult == FetchResult::Permanent;
+    bool networkHealthy = wifiUp && gotRealResponse;
     ota.loop(config.current.otaManifestUrl, wifiUp, networkHealthy);
 
     // Read live from config each time (cheap) rather than caching, so a
