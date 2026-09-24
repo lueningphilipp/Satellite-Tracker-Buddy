@@ -45,7 +45,7 @@ static bool parseEpoch(const String& s, OrbitalElements& out) {
     return true;
 }
 
-bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) {
+FetchResult fetchElements(const String& noradId, OrbitalElements& out, String* errOut) {
     WiFiClientSecure client;
     client.setInsecure();   // no CA bundle on-device; acceptable risk for a
                              // read-only hobby fetch, see comment in main.cpp
@@ -54,7 +54,7 @@ bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) 
     String url = "https://celestrak.org/NORAD/elements/gp.php?CATNR=" + noradId + "&FORMAT=csv";
     if (!http.begin(client, url)) {
         if (errOut) *errOut = "couldn't start request";
-        return false;
+        return FetchResult::Transient;   // local (out of memory/socket), not the request's fault
     }
 
     int code = http.GET();
@@ -63,26 +63,32 @@ bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) 
         Serial.printf("elements fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
         if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
-        return false;
+        return classifyHttp(code);
     }
     String body = http.getString();
     http.end();
 
-    // First line is the CSV header; second is our one data row. A "No GP
-    // data found" 404 body would already have been caught by the code check
-    // above, so an empty/short body here means something else went wrong.
+    // First line is the CSV header; second is our one data row. An unknown
+    // NORAD id gets a "No GP data found" body (a 404 per CLAUDE.md, but
+    // checked here too in case it ever arrives as a 200) - permanent, must
+    // not be retried. A genuinely empty body is a truncated transfer.
+    if (body.length() == 0) { if (errOut) *errOut = "empty response"; return FetchResult::Transient; }
+    if (body.startsWith("No GP data")) {
+        if (errOut) *errOut = "No GP data found";
+        return FetchResult::Permanent;
+    }
     int nl = body.indexOf('\n');
-    if (nl < 0) { if (errOut) *errOut = "empty response"; return false; }
+    if (nl < 0) { if (errOut) *errOut = "malformed response"; return FetchResult::Permanent; }
     String row = body.substring(nl + 1);
     row.trim();
-    if (row.length() == 0) { if (errOut) *errOut = "no data rows"; return false; }
+    if (row.length() == 0) { if (errOut) *errOut = "no data rows"; return FetchResult::Permanent; }
 
     OrbitalElements parsed;
     parsed.name = csvField(row, COL_NAME);
     parsed.noradCatId = csvField(row, COL_NORAD_ID).toInt();
     if (!parseEpoch(csvField(row, COL_EPOCH), parsed)) {
         if (errOut) *errOut = "malformed epoch";
-        return false;
+        return FetchResult::Permanent;
     }
     parsed.meanMotionRevPerDay = csvField(row, COL_MEAN_MOTION).toDouble();
     parsed.eccentricity = csvField(row, COL_ECC).toDouble();
@@ -94,12 +100,12 @@ bool fetchElements(const String& noradId, OrbitalElements& out, String* errOut) 
 
     if (parsed.name.length() == 0 || parsed.meanMotionRevPerDay <= 0) {
         if (errOut) *errOut = "malformed data";
-        return false;
+        return FetchResult::Permanent;
     }
 
     out = parsed;
     if (errOut) *errOut = "OK";
-    return true;
+    return FetchResult::Ok;
 }
 
 // Days-since-epoch date -> unix time, without relying on timegm() (not
@@ -113,79 +119,53 @@ static time_t unixFromYMD(int year, int mon, int day) {
     return (time_t)((jd - 2440587.5) * 86400.0 + 0.5);
 }
 
-bool fetchLaunchDate(const String& noradId, time_t& out, String* errOut) {
+FetchResult fetchLaunchDate(const String& noradId, time_t& out, String* errOut) {
     String url = "https://celestrak.org/satcat/records.php?CATNR=" + noradId + "&FORMAT=json";
 
-    // Retried once, but only on a connection/TLS-level failure ("network
-    // error" - http.GET() returning negative rather than a real HTTP
-    // status), never on an actual HTTP error code (403/404/etc.) - those
-    // are real server responses, retrying them immediately wouldn't help
-    // and would just waste a request against CelesTrak's rate limit.
-    // This is the third of three back-to-back HTTPS/TLS handshakes in one
-    // refetch cycle (elements -> n2yo -> launch date, see main.cpp), each
-    // opening its own WiFiClientSecure/HTTPClient - confirmed on real
-    // hardware that this specific fetch can intermittently fail this way
-    // and then succeed cleanly moments later on an otherwise-identical
-    // retry, which fits ESP32's known heap-fragmentation-after-repeated-
-    // TLS-sessions behavior better than a real, reproducible bug. Demo has
-    // no equivalent (Python doesn't hit this failure mode), so this one's
-    // firmware-only - same as a few other exceptions already noted in
-    // CLAUDE.md's Conventions.
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (attempt > 0) {
-            Serial.println("launch date fetch: retrying once after a network error");
-            delay(300);   // let the failed attempt's TLS session actually be reclaimed
-        }
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    if (!http.begin(client, url)) {
+        if (errOut) *errOut = "couldn't start request";
+        return FetchResult::Transient;   // local (out of memory/socket), not the request's fault
+    }
 
-        WiFiClientSecure client;
-        client.setInsecure();
-        HTTPClient http;
-        if (!http.begin(client, url)) {
-            if (errOut) *errOut = "couldn't start request";
-            return false;
-        }
-
-        int code = http.GET();
-        celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
-        if (code == HTTP_CODE_OK) {
-            String body = http.getString();
-            http.end();
-
-            // Plain string search rather than pulling in ArduinoJson for one
-            // fixed-format field - matches CSV parsing's style elsewhere in
-            // this file.
-            const char* key = "\"LAUNCH_DATE\":\"";
-            int idx = body.indexOf(key);
-            if (idx < 0) { if (errOut) *errOut = "no LAUNCH_DATE in response"; return false; }
-            idx += strlen(key);
-            String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
-            if (dateStr.length() != 10) { if (errOut) *errOut = "malformed date"; return false; }
-
-            int y, mo, d;
-            if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) {
-                if (errOut) *errOut = "malformed date";
-                return false;
-            }
-            out = unixFromYMD(y, mo, d);   // UTC, not local - all times UTC internally per CLAUDE.md
-            if (errOut) *errOut = "OK";
-            return true;
-        }
-
+    int code = http.GET();
+    celestrakRequests.recordRequest();   // counted regardless of outcome - see request_tracker.h
+    if (code != HTTP_CODE_OK) {
         Serial.printf("launch date fetch: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
-        if (code > 0) {
-            if (errOut) *errOut = "HTTP " + String(code);
-            return false;
-        }
-        if (errOut) *errOut = "network error";   // loop around for one retry
+        if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
+        return classifyHttp(code);
     }
-    return false;
+    String body = http.getString();
+    http.end();
+    if (body.length() == 0) { if (errOut) *errOut = "empty response"; return FetchResult::Transient; }
+
+    // Plain string search rather than pulling in ArduinoJson for one
+    // fixed-format field - matches CSV parsing's style elsewhere in
+    // this file.
+    const char* key = "\"LAUNCH_DATE\":\"";
+    int idx = body.indexOf(key);
+    if (idx < 0) { if (errOut) *errOut = "no LAUNCH_DATE in response"; return FetchResult::Permanent; }
+    idx += strlen(key);
+    String dateStr = body.substring(idx, idx + 10);   // "YYYY-MM-DD"
+    if (dateStr.length() != 10) { if (errOut) *errOut = "malformed date"; return FetchResult::Permanent; }
+
+    int y, mo, d;
+    if (sscanf(dateStr.c_str(), "%d-%d-%d", &y, &mo, &d) != 3) {
+        if (errOut) *errOut = "malformed date";
+        return FetchResult::Permanent;
+    }
+    out = unixFromYMD(y, mo, d);   // UTC, not local - all times UTC internally per CLAUDE.md
+    if (errOut) *errOut = "OK";
+    return FetchResult::Ok;
 }
 
-bool fetchN2yoName(const String& noradId, const String& apiKey, String& outName, String* errOut) {
+FetchResult fetchN2yoName(const String& noradId, const String& apiKey, String& outName, String* errOut) {
     if (apiKey.length() == 0) {
         if (errOut) *errOut = "no key configured";
-        return false;
+        return FetchResult::Permanent;
     }
 
     WiFiClientSecure client;
@@ -196,7 +176,7 @@ bool fetchN2yoName(const String& noradId, const String& apiKey, String& outName,
     String url = "https://api.n2yo.com/rest/v1/satellite/tle/" + noradId + "&apiKey=" + apiKey;
     if (!http.begin(client, url)) {
         if (errOut) *errOut = "couldn't start request";
-        return false;
+        return FetchResult::Transient;   // local (out of memory/socket), not the request's fault
     }
 
     int code = http.GET();
@@ -204,26 +184,27 @@ bool fetchN2yoName(const String& noradId, const String& apiKey, String& outName,
         Serial.printf("n2yo name lookup: HTTP %d for CATNR=%s\n", code, noradId.c_str());
         http.end();
         if (errOut) *errOut = code > 0 ? ("HTTP " + String(code)) : "network error";
-        return false;
+        return classifyHttp(code);
     }
     String body = http.getString();
     http.end();
+    if (body.length() == 0) { if (errOut) *errOut = "empty response"; return FetchResult::Transient; }
 
     // Plain string search, same style as fetchLaunchDate() above - one
     // fixed-format field doesn't need a full JSON parse.
     const char* key = "\"satname\":\"";
     int idx = body.indexOf(key);
-    if (idx < 0) { if (errOut) *errOut = "no satname in response"; return false; }
+    if (idx < 0) { if (errOut) *errOut = "no satname in response"; return FetchResult::Permanent; }
     idx += strlen(key);
     int end = body.indexOf('"', idx);
-    if (end < 0) { if (errOut) *errOut = "malformed response"; return false; }
+    if (end < 0) { if (errOut) *errOut = "malformed response"; return FetchResult::Permanent; }
     String name = body.substring(idx, end);
     name.trim();
-    if (name.length() == 0) { if (errOut) *errOut = "empty name"; return false; }
+    if (name.length() == 0) { if (errOut) *errOut = "empty name"; return FetchResult::Permanent; }
 
     outName = name;
     if (errOut) *errOut = "OK";
-    return true;
+    return FetchResult::Ok;
 }
 
 OrbitalElements fallbackElements() {

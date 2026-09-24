@@ -4,6 +4,7 @@
 #include "core/config.h"
 #include "core/wifi_setup.h"
 #include "core/elements.h"
+#include "core/retry.h"
 #include "core/status.h"
 #include "core/request_tracker.h"
 #include "core/sgp4_track.h"
@@ -28,33 +29,51 @@
 ConfigStore config;
 TrailBuffer trail;
 OrbitalElements lastElements;   // kept around so loop() can pass it to epaperRender()
-bool online = true;
+bool online = true;   // did the most recent elements fetch succeed (drives the ONLINE/OFFLINE dot)
 time_t launchDate = 0;
-bool haveLaunchDate = false;
+bool haveLaunchDate = false;   // launchDate is known AND belongs to the object currently shown
+
+// True while the displayed elements are the hardcoded ISS snapshot rather
+// than something fetched live.
+static bool shownIsFallback = false;
+
+// Per-NORAD-id caches for the two "enrichment" lookups. A satellite's launch
+// date never changes and its n2yo name only rarely does, so once known
+// they're kept and not re-requested on every scheduled elements refetch
+// (saves a CelesTrak request per cycle). Keyed by id so a cached value is
+// never shown next to a different object's orbital numbers - see CLAUDE.md's
+// fallback-mismatch gotcha.
+static long launchDateNorad = 0;
+static long n2yoNameNorad = 0;
+static String n2yoNameCache;
 
 // Loop timing state, hoisted up here (rather than declared just before
-// loop(), where they used to live) so refetchAndInit()/onConfigSaved()
-// above loop() in the file can reference lastRenderMs/forceRenderNow too.
+// loop(), where they used to live) so functions above loop() in the file can
+// reference lastRenderMs/forceRenderNow too.
 static unsigned long lastSampleMs = 0;
 static unsigned long lastRenderMs = 0;
-static unsigned long lastRefetchMs = 0;
-// Confirmed on real hardware: a transient failure (DNS resolver blip,
-// router hiccup, CelesTrak briefly erroring) left the display stuck on
-// stale fallback data for the rest of a 30-min elementsFetchMinutes
-// window, even though the underlying network was fine again within
-// seconds - the schedule only ever gave it one shot per full interval, up
-// to 24h apart at the default 1440-min setting. A handful of short, bounded
-// retries fixes that without turning into a hammering loop if CelesTrak (or
-// the network) is genuinely down for longer: after a failed fetch, retry
-// after ELEMENTS_RETRY_INTERVAL_MS instead of waiting the full interval,
-// for up to ELEMENTS_RETRY_MAX_ATTEMPTS tries, then fall back to the normal
-// cadence until the next scheduled attempt. A success at any point resets
-// the count, so a genuinely down CelesTrak still only costs a few extra
-// requests per outage, not a retry storm - see the README's Rate limits
-// section for why that budget matters.
-static int elementsFetchFailCount = 0;
-static const unsigned long ELEMENTS_RETRY_INTERVAL_MS = 2UL * 60UL * 1000UL;
-static const int ELEMENTS_RETRY_MAX_ATTEMPTS = 2;
+
+// One retry policy for all three API calls (see core/retry.h): first attempt
+// plus up to FetchJob::MAX_RETRIES retries FetchJob::RETRY_DELAY_MS apart,
+// transient failures only, then give up until the next scheduled trigger.
+// Confirmed on real hardware why the elements job needs this at all: a
+// transient failure (DNS resolver blip, router hiccup, CelesTrak briefly
+// erroring) at exactly the scheduled fetch used to leave the display on
+// stale fallback data for the rest of the interval - up to 24h at the max
+// setting - although the network was fine again seconds later. The retries
+// stay bounded on purpose so a genuinely down CelesTrak costs a handful of
+// requests per outage, never a retry storm (see README's Rate limits).
+//
+//   elements     periodic (elementsFetchMinutes); armed once at boot and
+//                re-armed on every config save.
+//   launch date  one-shot, armed by an elements success when the shown
+//   n2yo name    object's value isn't cached yet. Once they've given up they
+//                wait for the next elements success to try again.
+//
+// All network I/O runs through serviceFetchJobs().
+static FetchJob elementsJob;
+static FetchJob launchDateJob;
+static FetchJob n2yoJob;
 static unsigned long lastWifiScanMs = 0;
 static const unsigned long WIFI_SCAN_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 // WiFi.begin() is only ever called from setup() and the captive-portal flow
@@ -90,10 +109,10 @@ static const unsigned long PASS_CHECK_INTERVAL_MS = 5UL * 60UL * 1000UL;
 
 // **Real crash found on real hardware, twice, while building this**:
 // findNextPass() is a tight CPU loop (thousands of SGP4 calls). It was
-// first called directly from refetchAndInit(), which the config page's
-// POST handler also calls synchronously via onConfigSaved - i.e. on the
-// async_tcp task, exactly like the WiFi-scan watchdog crash found earlier
-// this session (see CLAUDE.md's TODO). A single call didn't crash it, but
+// first called directly from the old refetchAndInit() (since split up - see
+// applyElements()), which the config page's POST handler also called
+// synchronously via onConfigSaved - i.e. on the async_tcp task, exactly like
+// the WiFi-scan watchdog crash found earlier this session (see CLAUDE.md's TODO). A single call didn't crash it, but
 // a quick sequence of config-page saves did: "Task watchdog got
 // triggered... async_tcp... Aborting()... Rebooting." An attempted fix
 // with a plain non-atomic reentrancy flag, then a real atomic
@@ -101,11 +120,11 @@ static const unsigned long PASS_CHECK_INTERVAL_MS = 5UL * 60UL * 1000UL;
 // dual-core, so the async_tcp-task call and loop()'s own periodic check can
 // genuinely run at once) - true concurrent execution isn't really the
 // point to prevent here anyway; the *task* is. So: findNextPass() is now
-// only ever invoked from loop() (this flag is how refetchAndInit(), which
-// runs on either task, asks for a recompute without doing it itself).
+// only ever invoked from loop() (this flag is how applyElements() asks for a
+// recompute without doing it itself).
 static bool passRecomputeNeeded = true;
 
-// Only call this from loop() - never from refetchAndInit() directly, see
+// Only call this from loop() - never from applyElements() directly, see
 // above.
 static void recomputeNextPass() {
     lastPassCheckMs = millis();
@@ -155,110 +174,158 @@ static const int8_t BOOT_BUTTON_PIN = 0;
 static const int8_t STATUS_LED_PIN = 2;
 static unsigned long buttonHeldSinceMs = 0;   // 0 = not currently held
 
-static void refetchAndInit() {
-    OrbitalElements el;
-    online = fetchElements(config.current.noradId, el, &connStatus.elementsStatus);
-    // Tracks elementsFetchFailCount regardless of what triggered this call
-    // (the scheduled path in loop(), or a config-page save via
-    // onConfigSaved()) - a manual save that succeeds should clear a
-    // pending retry just as much as a scheduled one does, and either path
-    // failing should count toward the same short retry window. See
-    // elementsFetchFailCount's comment near loop()'s scheduling logic.
-    if (online) {
-        if (elementsFetchFailCount > 0)
-            Serial.println("Elements fetch recovered - back to the normal schedule");
-        elementsFetchFailCount = 0;
-        Serial.printf("Fetched elements for %s: %s\n",
-                       config.current.noradId.c_str(), el.name.c_str());
-    } else {
-        elementsFetchFailCount++;
-        Serial.printf("Elements fetch failed (%s) - using stale fallback (ISS)\n",
-                       connStatus.elementsStatus.c_str());
-        if (elementsFetchFailCount <= ELEMENTS_RETRY_MAX_ATTEMPTS)
-            Serial.printf("Will retry in %lu min (attempt %d/%d)\n",
-                          ELEMENTS_RETRY_INTERVAL_MS / 60000UL,
-                          elementsFetchFailCount, ELEMENTS_RETRY_MAX_ATTEMPTS);
-        else
-            Serial.printf("Giving up retrying for now - back to the normal %d-min schedule\n",
-                          config.current.elementsFetchMinutes);
-        el = fallbackElements();
-    }
-
+// Swaps `el` in as the displayed object: SGP4 init, re-applying a cached n2yo
+// name, resetting the trail (its sampling interval scales with the possibly
+// new period - CLAUDE.md's "Trail sampling interval... must scale with
+// period"), and flagging a next-pass recompute. Returns false, leaving the
+// previous state in place, if SGP4 rejects the elements.
+static bool applyElements(OrbitalElements el, bool isFallback) {
     if (!satTrack.init(el)) {
         Serial.println("sgp4init() failed - bad elements?");
-        return;
+        return false;
     }
+    if (!isFallback && n2yoNameNorad == el.noradCatId && n2yoNameCache.length())
+        el.name = n2yoNameCache;
 
-    // From here on, use el.noradCatId (the object actually being displayed)
-    // rather than config.current.noradId (what was requested) - they only
-    // differ when the fetch above failed and fell back to the ISS, and using
-    // the requested id in that case would look up a *different* satellite's
-    // name/launch-date next to the ISS's orbital numbers. Confirmed as a
-    // real bug (showed a freshly-launched object's "8 days in space" next
-    // to the ISS's data) - fixed in the demo first, see its main().
-    String shownNorad = String(el.noradCatId);
-
-    // Best-effort name upgrade via n2yo - only when we're actually showing
-    // the requested object (not fallback data) and a key is configured.
-    // Skipped entirely rather than looked-up-for-the-wrong-object in the
-    // fallback case, same reasoning as above; also avoids quietly losing
-    // the "(fallback)" suffix that's otherwise the only other signal
-    // (besides the OFFLINE dot) that this is stale data.
-    if (online && config.current.n2yoApiKey.length()) {
-        String n2yoName;
-        if (fetchN2yoName(shownNorad, config.current.n2yoApiKey, n2yoName, &connStatus.n2yoStatus)) {
-            Serial.printf("n2yo resolved name: %s\n", n2yoName.c_str());
-            el.name = n2yoName;
-        } else {
-            Serial.printf("n2yo name lookup failed (%s) - keeping CelesTrak name\n",
-                           connStatus.n2yoStatus.c_str());
-        }
-    } else {
+    lastElements = el;
+    shownIsFallback = isFallback;
+    // Only ever show a launch date that belongs to the object on screen -
+    // see CLAUDE.md's fallback-mismatch gotcha (this is what keys off
+    // el.noradCatId rather than the requested id).
+    haveLaunchDate = (launchDateNorad == el.noradCatId);
+    if (isFallback) {
         connStatus.n2yoStatus = config.current.n2yoApiKey.length()
                                      ? "skipped (offline/fallback data)"
                                      : "no key configured";
+        if (!haveLaunchDate) connStatus.launchDateStatus = "skipped (offline/fallback data)";
     }
-
-    lastElements = el;
     Serial.printf("%s (%s): apogee %.0f km, perigee %.0f km, period %.1f min\n",
                   el.name.c_str(), satTrack.orbitClass(), satTrack.apogeeKm(),
                   satTrack.perigeeKm(), satTrack.periodMin());
 
-    haveLaunchDate = fetchLaunchDate(shownNorad, launchDate, &connStatus.launchDateStatus);
-    if (!haveLaunchDate)
-        Serial.printf("Launch date fetch failed (%s) - time-in-space will be hidden\n",
-                       connStatus.launchDateStatus.c_str());
-
-    // New satellite selected (or refetched) -> old trail no longer applies,
-    // and its sampling interval scales with the (possibly new) period, per
-    // CLAUDE.md's "Saving triggers an immediate TLE refetch and clears the
-    // trail buffer" + "Trail sampling interval... must scale with period".
+    // New satellite (or refetched elements) -> old trail no longer applies.
     trail.clear();
     trail.setPeriodMinutes(satTrack.periodMin());
 
-    // New satellite (or a site lat/lon change, which also routes through
-    // this function via the config page's onConfigSaved callback) means
-    // the previous next-pass prediction no longer applies either. Flag it
-    // for loop() to actually recompute - see recomputeNextPass()'s comment
-    // for why this function must never call it directly (this can run on
-    // the async_tcp task).
+    // A new satellite (or a site lat/lon change, which also routes through a
+    // refetch via the config page's save handler) means the previous
+    // next-pass prediction no longer applies either. Flag it for loop() to
+    // actually recompute - see recomputeNextPass()'s comment for why this
+    // must never call it directly.
     passRecomputeNeeded = true;
+    return true;
 }
 
-// The config page's onConfigSaved callback - NOT the same as calling
-// refetchAndInit() directly (that's still what the scheduled/automatic
-// refetch in loop() below uses). A save is something the user is actively
-// watching for a result from - forces the very next loop() iteration to
-// redraw the panel immediately (whatever the outcome - new satellite, new
-// OFFLINE status if the fetch failed, etc.) instead of waiting up to
-// displayRefreshMinutes for the next scheduled tick. Setting a flag here
-// rather than calling epaperRender() directly for the same reason
-// findNextPass() moved off this path earlier - e-paper rendering does
-// enough tight-loop CPU work (the land-mask nested loops etc.) that
-// running it on the async_tcp task risks the exact same watchdog crash
-// already hit twice this session.
+// Appends the retry outlook to a status string, e.g. "network error - retry
+// 1/2 in 2 min" - shown on the config page so an in-progress retry doesn't
+// look like a dead end. Permanent errors (HTTP 404, ...) get no suffix.
+static void noteRetry(String& status, FetchResult r, bool retryScheduled, const FetchJob& job) {
+    if (r != FetchResult::Transient) return;
+    int maxRetries = FetchJob::MAX_RETRIES;
+    unsigned long delayMin = FetchJob::RETRY_DELAY_MS / 60000UL;
+    if (retryScheduled)
+        status += " - retry " + String(job.retriesUsed()) + "/" + String(maxRetries)
+                  + " in " + String(delayMin) + " min";
+    else
+        status += " - gave up after " + String(maxRetries) + " retries";
+}
+
+static void runElementsJob() {
+    OrbitalElements el;
+    FetchResult r = fetchElements(config.current.noradId, el, &connStatus.elementsStatus);
+    unsigned long intervalMs = (unsigned long)config.current.elementsFetchMinutes * 60UL * 1000UL;
+    bool retrying = elementsJob.report(r, millis(), intervalMs);
+    noteRetry(connStatus.elementsStatus, r, retrying, elementsJob);
+    online = (r == FetchResult::Ok);
+
+    if (!online) {
+        Serial.printf("Elements fetch failed (%s)\n", connStatus.elementsStatus.c_str());
+        applyElements(fallbackElements(), true);
+        return;
+    }
+
+    Serial.printf("Fetched elements for %s: %s\n",
+                  config.current.noradId.c_str(), el.name.c_str());
+    if (!applyElements(el, false)) return;
+
+    // Launch date and n2yo name follow a successful elements fetch, keyed off
+    // the elements' own noradCatId (the object actually being displayed), and
+    // only when not already cached for it.
+    long id = el.noradCatId;
+    if (launchDateNorad != id) launchDateJob.arm(millis());
+    else launchDateJob.disarm();
+    if (config.current.n2yoApiKey.length() == 0) {
+        n2yoJob.disarm();
+        connStatus.n2yoStatus = "no key configured";
+    } else if (n2yoNameNorad != id) {
+        n2yoJob.arm(millis());
+    } else {
+        n2yoJob.disarm();
+    }
+}
+
+static void runLaunchDateJob() {
+    if (shownIsFallback) { launchDateJob.disarm(); return; }
+    long id = lastElements.noradCatId;
+    time_t out;
+    FetchResult r = fetchLaunchDate(String(id), out, &connStatus.launchDateStatus);
+    bool retrying = launchDateJob.report(r, millis(), 0);
+    noteRetry(connStatus.launchDateStatus, r, retrying, launchDateJob);
+    if (r == FetchResult::Ok) {
+        launchDate = out;
+        launchDateNorad = id;
+        haveLaunchDate = true;
+    } else {
+        Serial.printf("Launch date fetch failed (%s)\n", connStatus.launchDateStatus.c_str());
+    }
+}
+
+// Best-effort name upgrade via n2yo - only when we're showing the requested
+// object (not fallback data) and a key is configured. Skipped entirely
+// rather than looked-up-for-the-wrong-object in the fallback case; also
+// avoids quietly losing the "(fallback)" suffix that's otherwise the only
+// other signal (besides the OFFLINE dot) that this is stale data.
+static void runN2yoJob() {
+    if (shownIsFallback || config.current.n2yoApiKey.length() == 0) { n2yoJob.disarm(); return; }
+    long id = lastElements.noradCatId;
+    String name;
+    FetchResult r = fetchN2yoName(String(id), config.current.n2yoApiKey, name, &connStatus.n2yoStatus);
+    bool retrying = n2yoJob.report(r, millis(), 0);
+    noteRetry(connStatus.n2yoStatus, r, retrying, n2yoJob);
+    if (r == FetchResult::Ok) {
+        Serial.printf("n2yo resolved name: %s\n", name.c_str());
+        n2yoNameNorad = id;
+        n2yoNameCache = name;
+        lastElements.name = name;
+    } else {
+        Serial.printf("n2yo name lookup failed (%s) - keeping CelesTrak name\n",
+                      connStatus.n2yoStatus.c_str());
+    }
+}
+
+// Runs at most one due fetch job (elements first, so its follow-ups come
+// right after) and returns whether it did. Callers drain it with
+// `while (serviceFetchJobs()) {}` - every job reschedules itself into the
+// future (or disarms) after running, so that always terminates.
+static bool serviceFetchJobs() {
+    unsigned long now = millis();
+    if (elementsJob.due(now))   { runElementsJob();   return true; }
+    if (launchDateJob.due(now)) { runLaunchDateJob(); return true; }
+    if (n2yoJob.due(now))       { runN2yoJob();       return true; }
+    return false;
+}
+
+// The config page's onConfigSaved callback: a fresh retry budget, re-ask n2yo
+// too (the name may have improved), and redraw as soon as the whole chain has
+// finished. Launch date stays cached - it never changes - and is only re-armed
+// by the elements job if the object is different.
 static void onConfigSaved() {
-    refetchAndInit();
+    n2yoNameNorad = 0;
+    n2yoNameCache = "";
+    launchDateJob.disarm();
+    n2yoJob.disarm();
+    elementsJob.arm(millis());
+    while (serviceFetchJobs()) {}
     forceRenderNow = true;
 }
 
@@ -297,7 +364,11 @@ void setup() {
     }
     Serial.println(" done, " + String((long)now));
 
-    refetchAndInit();
+    // First fetch runs here (not left to loop()) so satTrack is initialised
+    // before the first sample/render. A failed one already fell back to the
+    // ISS via runElementsJob(); its retries then continue from loop().
+    elementsJob.arm(millis());
+    while (serviceFetchJobs()) {}
 
     // One update check per boot, automatically - just sets a flag here
     // (setup() is otherwise a fine place to call ota.loop() directly, since
@@ -358,19 +429,12 @@ void loop() {
         }
     }
 
-    // Read live from config each time (cheap), same pattern as
-    // renderIntervalMs below - the config page clamps this to >=10 minutes
-    // server-side (see web_server.cpp) to keep even the most aggressive
-    // setting well clear of CelesTrak's 50-errors/2h firewall threshold.
-    // After a failure, a short bounded retry window takes over instead -
-    // see elementsFetchFailCount's comment above.
-    unsigned long refetchIntervalMs = (unsigned long)config.current.elementsFetchMinutes * 60UL * 1000UL;
-    bool retrying = elementsFetchFailCount > 0 && elementsFetchFailCount <= ELEMENTS_RETRY_MAX_ATTEMPTS;
-    unsigned long effectiveIntervalMs = retrying ? ELEMENTS_RETRY_INTERVAL_MS : refetchIntervalMs;
-    if (nowMs - lastRefetchMs >= effectiveIntervalMs) {
-        lastRefetchMs = nowMs;
-        refetchAndInit();   // updates elementsFetchFailCount itself - see its own comment
-    }
+    // Scheduled fetches. The elements interval is read live from config when
+    // a fetch settles; the config page clamps it to >=10 minutes server-side
+    // (see web_server.cpp) to keep even the most aggressive setting well clear
+    // of CelesTrak's 50-errors/2h firewall threshold. Retry timing lives in
+    // FetchJob - see the comment on the jobs above.
+    while (serviceFetchJobs()) {}
 
     // Keeps the config page's WiFi dropdown from going stale forever. Runs
     // here (blocking loop() for a few seconds, same class of tradeoff as
@@ -396,9 +460,9 @@ void loop() {
     }
 
     // Keeps the next-pass prediction fresh - only ever computed here in
-    // loop(), never from refetchAndInit() directly, see recomputeNextPass()'s
+    // loop(), never from applyElements() directly, see recomputeNextPass()'s
     // comment. Three triggers: (1) passRecomputeNeeded, set by
-    // refetchAndInit() (new satellite or a site lat/lon change) - fires
+    // applyElements() (new satellite or a site lat/lon change) - fires
     // regardless of the current haveNextPassInfo, since that flag itself is
     // what this recompute call re-evaluates; (2) a predicted rise time that
     // has actually elapsed, so a stale "pass" doesn't sit there showing a
