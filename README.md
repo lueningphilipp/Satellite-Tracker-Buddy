@@ -62,6 +62,10 @@ on your desk.
 - **Firmware version on the config page** - the status panel shows exactly
   which build is running (derived from the git tag at compile time), so you
   can tell at a glance whether a device is up to date.
+- **Slideshow mode** - switch the display from satellite tracking to your
+  own pictures (up to 16, stored on the device, kept across firmware
+  updates), shown full-screen in black and white and cycled on a timer. See
+  "Slideshow mode" below.
 
 ## How to use it
 
@@ -79,6 +83,11 @@ also shows a live count of CelesTrak requests made in the last 2 hours
 (persisted across reboots, so a restart can't hide recent activity),
 highlighted once it gets close to their actual 50-request firewall
 threshold - see "Rate limits" below.
+
+The settings are grouped: a **Display mode** choice (Satellite tracker or
+Slideshow) at the top, then the settings for the selected mode (the other
+mode's group is hidden, and keeps its values), then the device-wide ones
+(hostname, update URL, WiFi).
 
 Saving refetches/recomputes whatever changed (satellite, site location,
 n2yo key) immediately, and the display redraws right away too rather than
@@ -122,6 +131,34 @@ effect, same as before.
   scanned networks, and SSID/password fields to switch. Leave the SSID
   field blank to change other settings without touching WiFi. Saving a new
   network restarts the device to reconnect.
+
+### Slideshow mode
+
+Pick **Slideshow** under Display mode on the config page, then:
+
+- **Minutes each picture stays on screen** - 1-1440, default 10. Saved with
+  the **Save** button. With a single picture it simply stays up - e-paper
+  keeps its image without power, so there's nothing to refresh.
+- **Add pictures** - choose one or more images (anything your browser can
+  open: PNG, JPEG, ...). Your browser converts them to the panel's 800x480
+  black and white before uploading, so the device never handles the
+  original file. Before uploading, choose **Fill the screen** (crops the
+  edges) or **Show the whole picture** (white borders), and whether to
+  **dither** (best for photos; turn it off for logos, text and line art).
+  The preview shows exactly what the panel will display. **Upload** stores
+  them right away (no Save needed) and puts the newest one on the display.
+- **Pictures on the device** - thumbnails of what's stored, in upload order,
+  each with a **Delete** button. Deleting the picture currently on screen
+  moves on to the next one.
+
+Up to **16 pictures** fit - well under what the storage area physically
+holds (~27), so it never runs completely full. Pictures are kept across
+restarts and firmware updates. With no pictures stored, the display shows
+a short note with the config page's address and a QR code to it.
+
+Satellite tracking keeps running in the background while the slideshow is
+shown (elements are still fetched on their normal schedule), so switching
+back shows current data right away.
 
 ### Firmware updates
 
@@ -178,7 +215,8 @@ with a phone camera - so you never stare at a blank panel wondering what to do.
 
 ### Display behavior
 
-Full refresh every 2 minutes by default (configurable, see above) - each
+Full refresh every 2 minutes by default in satellite mode, or once per
+picture in slideshow mode (both configurable, see above) - each
 refresh takes ~2.6s and visibly flashes, which is normal e-paper behavior,
 not a fault.
 

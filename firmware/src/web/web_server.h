@@ -17,10 +17,15 @@
 // hostname changes always restart to take effect - see web_server.cpp), so
 // main.cpp can refetch elements / reinit SGP4 / clear the trail buffer
 // without web_server.cpp needing to know about any of that.
+//
+// Slideshow pictures (see core/slide_store.h) are uploaded/deleted through
+// their own endpoints, outside the main form; `onSlidesChanged(newId)` tells
+// main.cpp the set changed (newId = a fresh upload to jump to, else 0).
 
 class ConfigWebServer {
 public:
-    void begin(ConfigStore& store, std::function<void()> onConfigSaved);
+    void begin(ConfigStore& store, std::function<void()> onConfigSaved,
+               std::function<void(long)> onSlidesChanged);
 };
 
 extern ConfigWebServer configWebServer;

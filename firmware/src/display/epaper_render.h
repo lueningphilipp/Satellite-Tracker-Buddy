@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <functional>
 #include "../core/sgp4_track.h"
 #include "../core/elements.h"
 #include "../core/pass_predict.h"
@@ -41,6 +42,17 @@ void epaperRenderSetup(const char* apSsid, const String& apIp, const String& fai
 // core/pass_predict.h) - the whole "Next pass" column is hidden if
 // haveNextPassInfo is false (no site lat/lon configured), matching the
 // existing haveLaunchDate pattern for the "In space" column.
+// Slideshow mode: one full-screen 800x480 1bpp picture (see
+// core/slide_store.h for the format). readRows(offset, buf, len) fills buf
+// with the picture's bytes at that offset; read in row bands so no second
+// 48KB buffer is needed next to the display's own. A failed read leaves
+// the rest white. Firmware-only - the demo has no slideshow.
+void epaperRenderSlide(std::function<bool(size_t offset, uint8_t* buf, size_t len)> readRows);
+
+// Slideshow mode with no pictures stored yet: says so, plus the config-page
+// address and a QR to it, so the user knows where to upload.
+void epaperRenderSlideshowEmpty(const String& configUrl);
+
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
                    time_t launchDate, bool haveLaunchDate, int wifiBars,

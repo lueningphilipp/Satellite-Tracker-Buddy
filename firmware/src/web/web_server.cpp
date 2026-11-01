@@ -5,7 +5,9 @@
 #include "../core/request_tracker.h"
 #include "../core/version.h"
 #include "../core/ota.h"
+#include "../core/slide_store.h"
 #include <WiFi.h>
+#include <LittleFS.h>
 #include <ESPAsyncWebServer.h>
 
 ConfigWebServer configWebServer;
@@ -40,6 +42,14 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
 .inline{display:inline}
 .inline button{padding:.35em .7em;font-size:.9em}
 .install{background:#a52}
+input[type=radio],input[type=checkbox]{width:auto;margin:0 .4em 0 0;vertical-align:middle}
+.modes label{display:block;font-size:1em;color:#222;margin:.4em 0}
+fieldset{border:1px solid #ddd;border-radius:6px;margin:1em 0;padding:.5em 1em}
+legend{font-weight:bold;padding:0 .3em}
+.slide{display:flex;align-items:center;gap:.6em;margin:.4em 0;font-size:.85em}
+.slide canvas{width:120px;height:72px;border:1px solid #ccc;flex:none}
+.slide span{flex:1;word-break:break-all}
+.del{background:#a22}
 </style></head><body>
 <h2>Satellite Tracker Buddy</h2>
 <div class="status">
@@ -56,6 +66,13 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   interval floor already keeps normal use well under it)
 </div>
 <form method="POST" action="/config">
+  <label>Display mode</label>
+  <div class="modes">
+    <label><input type="radio" name="mode" value="0" %MODESAT% onchange="showMode()">Satellite tracker</label>
+    <label><input type="radio" name="mode" value="1" %MODESLIDE% onchange="showMode()">Slideshow</label>
+  </div>
+
+  <fieldset id="satSettings"><legend>Satellite tracker</legend>
   <label>NORAD catalog id</label>
   <input name="norad" id="norad" value="%NORAD%" required>
   <div>%FAVBUTTONS%</div>
@@ -91,7 +108,34 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   requests happen per fetch, so even at the minimum this stays well under
   that (see the README's "Rate limits" section).</label>
   <input name="fetch" value="%FETCH%" type="number" min="10" max="1440" step="1">
+  </fieldset>
 
+  <fieldset id="slideSettings"><legend>Slideshow</legend>
+  <label>Minutes each picture stays on screen (with a single picture it
+  just stays up)</label>
+  <input name="slidemin" value="%SLIDEMIN%" type="number" min="1" max="1440" step="1">
+
+  <label id="slideCount">Pictures on the device</label>
+  <div id="slideList"></div>
+
+  <label>Add pictures - converted to black and white 800x480 in this browser,
+  then uploaded right away (no need to Save)</label>
+  <input type="file" id="pics" accept="image/*" multiple onchange="previewPic()">
+  <label>Framing</label>
+  <select id="fit" onchange="previewPic()">
+    <option value="cover">Fill the screen (crops the edges)</option>
+    <option value="contain">Show the whole picture (white borders)</option>
+  </select>
+  <label style="display:block;margin:.3em 0 1em">
+    <input type="checkbox" id="dither" checked onchange="previewPic()">
+    Dither (best for photos - untick for logos, text and line art)
+  </label>
+  <canvas id="preview" width="800" height="480" style="width:100%;border:1px solid #ccc"></canvas>
+  <button type="button" onclick="uploadPics()">Upload</button>
+  <div id="upStatus" style="font-size:.85em;color:#555;margin:.3em 0"></div>
+  </fieldset>
+
+  <fieldset><legend>Device</legend>
   <label>Device hostname (shown to your router/DHCP; requires a reconnect
   to take effect)</label>
   <input name="hostname" value="%HOSTNAME%">
@@ -112,11 +156,128 @@ hr{border:0;border-top:1px solid #ddd;margin:1.5em 0}
   <input id="ssid" name="ssid" placeholder="leave blank to keep current network">
   <label>Password</label>
   <input name="pass" type="password">
+  </fieldset>
 
-  <button class="save" type="submit">Save &amp; refetch</button>
+  <button class="save" type="submit">Save</button>
 </form>
 <script>
 function pick(id){document.getElementById('norad').value=id;}
+
+// --- Slideshow ---------------------------------------------------------
+// Pictures are converted here, not on the device: scaled/cropped to the
+// panel's 800x480, turned to grey, then thresholded or Floyd-Steinberg
+// dithered to 1 bit, and packed 8 pixels/byte, MSB first, 1 = black - the
+// exact bytes the firmware draws (see core/slide_store.h).
+var W = 800, H = 480, listLoaded = false, listGen = 0;
+function $(id){ return document.getElementById(id); }
+function showMode(){
+  var slide = document.querySelector('input[name=mode]:checked').value == '1';
+  $('satSettings').style.display = slide ? 'none' : '';
+  $('slideSettings').style.display = slide ? '' : 'none';
+  if (slide && !listLoaded) { listLoaded = true; loadList(); }
+}
+function loadImg(file){
+  return new Promise(function(ok, bad){
+    var img = new Image();
+    img.onload = function(){ ok(img); };
+    img.onerror = bad;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function convert(img){
+  var c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
+  x.imageSmoothingQuality = 'high';
+  var cover = $('fit').value == 'cover';
+  var s = cover ? Math.max(W / img.width, H / img.height) : Math.min(W / img.width, H / img.height);
+  var w = img.width * s, h = img.height * s;
+  x.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+  var p = x.getImageData(0, 0, W, H).data, g = new Float32Array(W * H);
+  for (var i = 0; i < W * H; i++) g[i] = 0.299 * p[4*i] + 0.587 * p[4*i+1] + 0.114 * p[4*i+2];
+  var dith = $('dither').checked, bits = new Uint8Array(W * H / 8);
+  for (var y = 0; y < H; y++) for (var px = 0; px < W; px++) {
+    var k = y * W + px, old = g[k], black = old < 128, err = old - (black ? 0 : 255);
+    if (black) bits[k >> 3] |= 0x80 >> (px & 7);
+    if (!dith) continue;
+    if (px + 1 < W) g[k + 1] += err * 7 / 16;
+    if (y + 1 < H) {
+      if (px > 0) g[k + W - 1] += err * 3 / 16;
+      g[k + W] += err * 5 / 16;
+      if (px + 1 < W) g[k + W + 1] += err / 16;
+    }
+  }
+  return bits;
+}
+function drawBits(canvas, bits){
+  var c = document.createElement('canvas'); c.width = W; c.height = H;
+  var x = c.getContext('2d'), d = x.createImageData(W, H);
+  for (var i = 0; i < W * H; i++) {
+    var v = (bits[i >> 3] & (0x80 >> (i & 7))) ? 0 : 255;
+    d.data[4*i] = d.data[4*i+1] = d.data[4*i+2] = v; d.data[4*i+3] = 255;
+  }
+  x.putImageData(d, 0, 0);
+  canvas.getContext('2d').drawImage(c, 0, 0, canvas.width, canvas.height);
+}
+function previewPic(){
+  var f = $('pics').files;
+  if (!f.length) return;
+  loadImg(f[0]).then(function(img){ drawBits($('preview'), convert(img)); })
+    .catch(function(){ $('upStatus').textContent = 'Could not read ' + f[0].name + ' as an image.'; });
+}
+async function uploadPics(){
+  var files = $('pics').files, st = $('upStatus');
+  if (!files.length) { st.textContent = 'Choose one or more pictures first.'; return; }
+  for (var n = 0; n < files.length; n++) {
+    var f = files[n];
+    st.textContent = 'Uploading ' + (n + 1) + ' of ' + files.length + ' (' + f.name + ')...';
+    var bits;
+    try { bits = convert(await loadImg(f)); }
+    catch (e) { st.textContent = 'Could not read ' + f.name + ' as an image.'; loadList(); return; }
+    drawBits($('preview'), bits);
+    try {
+      var r = await fetch('/slides/upload?name=' + encodeURIComponent(f.name),
+                          {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: bits});
+      if (!r.ok) { st.textContent = f.name + ': ' + await r.text(); loadList(); return; }
+    } catch (e) { st.textContent = f.name + ': upload failed (device unreachable?)'; loadList(); return; }
+  }
+  st.textContent = 'Uploaded ' + files.length + ' picture(s) - the newest one is on the display now.';
+  $('pics').value = '';
+  loadList();
+}
+async function delPic(id){
+  if (!confirm('Delete this picture from the device?')) return;
+  await fetch('/slides/delete?id=' + id, {method: 'POST'});
+  loadList();
+}
+async function loadList(){
+  var gen = ++listGen, el = $('slideList');
+  var d;
+  try { d = await (await fetch('/slides/list')).json(); }
+  catch (e) { el.textContent = 'Could not load the picture list.'; return; }
+  if (gen != listGen) return;
+  $('slideCount').textContent = 'Pictures on the device: ' + d.slides.length + ' / ' + d.max;
+  el.innerHTML = '';
+  var thumbs = [];
+  d.slides.forEach(function(s){
+    var row = document.createElement('div'); row.className = 'slide';
+    var cv = document.createElement('canvas'); cv.width = 160; cv.height = 96;
+    var name = document.createElement('span'); name.textContent = s.name || ('Picture ' + s.id);
+    var del = document.createElement('button'); del.type = 'button'; del.className = 'del';
+    del.textContent = 'Delete'; del.onclick = function(){ delPic(s.id); };
+    row.appendChild(cv); row.appendChild(name); row.appendChild(del); el.appendChild(row);
+    thumbs.push([s.id, cv]);
+  });
+  // One at a time - 48KB each, no need to make the device serve them all at once.
+  for (var t = 0; t < thumbs.length; t++) {
+    if (gen != listGen) return;
+    try {
+      var buf = await (await fetch('/slides/raw?id=' + thumbs[t][0])).arrayBuffer();
+      if (buf.byteLength == W * H / 8) drawBits(thumbs[t][1], new Uint8Array(buf));
+    } catch (e) {}
+  }
+}
+showMode();
 function useMyLocation(){
   var status = document.getElementById('geoStatus');
   if (!navigator.geolocation) {
@@ -197,6 +358,10 @@ static String renderPage(const DeviceConfig& cfg) {
     page.replace("%FETCH%", String(cfg.elementsFetchMinutes));
     page.replace("%HOSTNAME%", cfg.hostname);
     page.replace("%OTAURL%", cfg.otaManifestUrl);
+    bool slideshow = cfg.displayMode == DisplayMode::Slideshow;
+    page.replace("%MODESAT%", slideshow ? "" : "checked");
+    page.replace("%MODESLIDE%", slideshow ? "checked" : "");
+    page.replace("%SLIDEMIN%", String(cfg.slideMinutes));
 
     // Firmware update status/button - see core/ota.h. The install button
     // only appears once a check has actually found a newer release, so a
@@ -239,7 +404,8 @@ static String renderPage(const DeviceConfig& cfg) {
     return page;
 }
 
-void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSaved) {
+void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSaved,
+                            std::function<void(long)> onSlidesChanged) {
     server.on("/", HTTP_GET, [&store](AsyncWebServerRequest* req) {
         req->send(200, "text/html", renderPage(store.current));
     });
@@ -276,6 +442,9 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"hostname\":\"" + store.current.hostname + "\",";
         json += "\"refreshMinutes\":" + String(store.current.displayRefreshMinutes) + ",";
         json += "\"fetchMinutes\":" + String(store.current.elementsFetchMinutes) + ",";
+        json += "\"mode\":\"" + String(store.current.displayMode == DisplayMode::Slideshow ? "slideshow" : "satellite") + "\",";
+        json += "\"slideMinutes\":" + String(store.current.slideMinutes) + ",";
+        json += "\"slideCount\":" + String(slides.count()) + ",";
         json += "\"wifiSsid\":\"" + store.current.wifiSsid + "\",";
         json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
         json += "\"elementsStatus\":\"" + connStatus.elementsStatus + "\",";
@@ -331,6 +500,18 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             if (mins > 1440) mins = 1440;
             store.current.elementsFetchMinutes = mins;
         }
+        if (req->hasParam("mode", true)) {
+            store.current.displayMode = req->getParam("mode", true)->value() == "1"
+                                            ? DisplayMode::Slideshow : DisplayMode::Satellite;
+        }
+        if (req->hasParam("slidemin", true)) {
+            int mins = req->getParam("slidemin", true)->value().toInt();
+            // Same reasoning as the refresh clamp above: 0 would flash
+            // through the pictures as fast as the panel can refresh.
+            if (mins < 1) mins = 1;
+            if (mins > 1440) mins = 1440;
+            store.current.slideMinutes = mins;
+        }
 
         // Hostname and WiFi changes only take effect on a fresh WiFi.begin()
         // (see wifi_setup.cpp's connect()), so either one triggers a
@@ -368,9 +549,86 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         }
 
         req->send(200, "text/html",
-                   "<html><body><p>Saved. Refetching elements for "
-                   + store.current.noradId + "...</p><a href=\"/\">Back</a></body></html>");
+                   store.current.displayMode == DisplayMode::Slideshow
+                       ? String("<html><body><p>Saved. Slideshow mode.</p><a href=\"/\">Back</a></body></html>")
+                       : "<html><body><p>Saved. Refetching elements for "
+                         + store.current.noradId + "...</p><a href=\"/\">Back</a></body></html>");
         if (onConfigSaved) onConfigSaved();
+    });
+
+    // --- Slideshow pictures (see core/slide_store.h) ---------------------
+    // The page converts each picture to the panel's raw 1bpp format and
+    // POSTs exactly SLIDE_BYTES as application/octet-stream, which
+    // ESPAsyncWebServer hands to the body callback chunk by chunk (~1.4KB
+    // each). Each chunk is one small LittleFS write - milliseconds, not the
+    // multi-second blocking the async_tcp gotcha is about - so writing here
+    // is fine; the e-paper redraw itself is left to loop() via
+    // onSlidesChanged. Size and the SLIDE_MAX limit are checked up front
+    // from Content-Length, before anything touches flash.
+    // Not plain "/slides": ESPAsyncWebServer treats a path as a prefix
+    // match, so that would also swallow GET /slides/raw.
+    server.on("/slides/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+        String json = "{\"max\":" + String(SLIDE_MAX) + ",\"slides\":[";
+        bool first = true;
+        for (const SlideInfo& s : slides.list()) {
+            if (!first) json += ",";
+            first = false;
+            json += "{\"id\":" + String(s.id) + ",\"name\":\"" + s.name + "\"}";
+        }
+        json += "]}";
+        req->send(200, "application/json", json);
+    });
+
+    server.on("/slides/raw", HTTP_GET, [](AsyncWebServerRequest* req) {
+        long id = req->hasParam("id") ? req->getParam("id")->value().toInt() : 0;
+        String p = slides.path(id);
+        if (id <= 0 || !LittleFS.exists(p)) { req->send(404, "text/plain", "no such picture"); return; }
+        req->send(LittleFS, p, "application/octet-stream");
+    });
+
+    server.on("/slides/upload", HTTP_POST,
+        [onSlidesChanged](AsyncWebServerRequest* req) {
+            if (req->contentLength() != SLIDE_BYTES) {
+                req->send(400, "text/plain", "wrong size - expected an 800x480 1-bit picture");
+                return;
+            }
+            if (!req->_tempFile) {
+                req->send(507, "text/plain",
+                          slides.hasRoom() ? String("could not write to flash")
+                                           : "storage full (" + String(SLIDE_MAX) + " pictures max) - delete one first");
+                return;
+            }
+            req->_tempFile.close();
+            // Kept JSON- and HTML-safe at the source, so the list endpoint
+            // above can embed it without escaping.
+            String name = req->hasParam("name") ? req->getParam("name")->value() : "";
+            String clean;
+            for (size_t i = 0; i < name.length() && clean.length() < 60; i++) {
+                char c = name[i];
+                clean += ((uint8_t)c < 0x20 || c == '"' || c == '\\' || c == '<' || c == '>') ? '_' : c;
+            }
+            long id = slides.commitUpload(clean);
+            if (id < 0) { req->send(500, "text/plain", "could not save the picture"); return; }
+            Serial.printf("Slide %ld uploaded (%s)\n", id, clean.c_str());
+            req->send(200, "text/plain", String(id));
+            if (onSlidesChanged) onSlidesChanged(id);
+        },
+        nullptr,
+        [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0 && total == SLIDE_BYTES && slides.hasRoom())
+                req->_tempFile = slides.openUpload();
+            if (req->_tempFile && req->_tempFile.write(data, len) != len) {
+                req->_tempFile.close();
+                slides.discardUpload();
+            }
+        });
+
+    server.on("/slides/delete", HTTP_POST, [onSlidesChanged](AsyncWebServerRequest* req) {
+        long id = req->hasParam("id") ? req->getParam("id")->value().toInt() : 0;
+        if (id <= 0 || !slides.remove(id)) { req->send(404, "text/plain", "no such picture"); return; }
+        Serial.printf("Slide %ld deleted\n", id);
+        req->send(200, "text/plain", "deleted");
+        if (onSlidesChanged) onSlidesChanged(0);
     });
 
     // Manual firmware-update flow (see core/ota.h) - both handlers only set

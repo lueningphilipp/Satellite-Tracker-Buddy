@@ -257,6 +257,68 @@ void epaperRenderSetup(const char* apSsid, const String& apIp, const String& fai
     } while (display.nextPage());
 }
 
+void epaperRenderSlide(std::function<bool(size_t offset, uint8_t* buf, size_t len)> readRows) {
+    // 40 rows x 100 bytes = 4KB per band (static - too big for loop()'s
+    // stack to carry comfortably), 12 bands per picture.
+    const int bandRows = 40;
+    const size_t rowBytes = W / 8;
+    static uint8_t band[bandRows * (W / 8)];
+
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        for (int y = 0; y < H; y += bandRows) {
+            int rows = min(bandRows, H - y);
+            if (!readRows((size_t)y * rowBytes, band, rows * rowBytes)) break;
+            display.drawBitmap(0, y, band, W, rows, GxEPD_BLACK);
+        }
+    } while (display.nextPage());
+}
+
+void epaperRenderSlideshowEmpty(const String& configUrl) {
+    // Version 3 holds up to 53 bytes at ECC_LOW - plenty for
+    // "http://255.255.255.255/". 4px/module, same as the setup screen.
+    const uint8_t qrVersion = 3;
+    const int qrPxPerModule = 4;
+    QRCode qrcode;
+    uint8_t qrcodeData[qrcode_getBufferSize(qrVersion)];
+    qrcode_initText(&qrcode, qrcodeData, qrVersion, ECC_LOW, configUrl.c_str());
+    int codeSize = qrPxPerModule * qrcode.size;
+
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+        display.setFont(&FreeSansBold18pt7b);
+        display.setCursor(40, 65);
+        display.print("Slideshow: no pictures yet");
+        display.drawFastHLine(40, 85, W - 80, GxEPD_BLACK);
+        display.drawFastHLine(40, 86, W - 80, GxEPD_BLACK);
+
+        display.setFont(&FreeSans12pt7b);
+        display.setCursor(40, 150);
+        display.print("Upload pictures on the config page:");
+        display.setFont(&FreeSansBold12pt7b);
+        display.setCursor(40, 185);
+        display.print(configUrl);
+        display.setFont(&FreeSans12pt7b);
+        display.setCursor(40, 240);
+        display.print("Or switch back to satellite tracker mode there.");
+
+        int qrX = W - 40 - codeSize, qrY = 150;
+        for (uint8_t my = 0; my < qrcode.size; my++) {
+            for (uint8_t mx = 0; mx < qrcode.size; mx++) {
+                if (qrcode_getModule(&qrcode, mx, my)) {
+                    display.fillRect(qrX + mx * qrPxPerModule, qrY + my * qrPxPerModule,
+                                      qrPxPerModule, qrPxPerModule, GxEPD_BLACK);
+                }
+            }
+        }
+    } while (display.nextPage());
+}
+
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
                    time_t launchDate, bool haveLaunchDate, int wifiBars,

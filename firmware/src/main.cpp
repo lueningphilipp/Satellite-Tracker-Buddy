@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
+#include <algorithm>
 #include "core/config.h"
 #include "core/wifi_setup.h"
 #include "core/elements.h"
@@ -11,6 +12,7 @@
 #include "core/pass_predict.h"
 #include "core/version.h"
 #include "core/ota.h"
+#include "core/slide_store.h"
 #include "web/web_server.h"
 #include "display/epaper_render.h"
 #include "display/trail_buffer.h"
@@ -363,6 +365,59 @@ static void onConfigSaved() {
     refetchRequested = true;
 }
 
+// Slideshow mode (see core/slide_store.h). Same flag pattern as above: the
+// upload/delete handlers run on async_tcp and only note what changed;
+// serviceSlideshow() in loop() decides what to draw.
+static long currentSlideId = 0;           // picture on the panel, 0 = none
+static unsigned long lastSlideMs = 0;
+static volatile bool slidesChanged = false;
+static volatile long slideRequested = 0;  // freshly uploaded picture to jump to
+
+static void onSlidesChanged(long showId) {
+    if (showId > 0) slideRequested = showId;
+    slidesChanged = true;
+}
+
+// Advances on the per-picture timer, jumps to a fresh upload, and moves on
+// if the picture on the panel was deleted. A single picture is never
+// redrawn by the timer - e-paper holds it without power, so a refresh would
+// only flash the same image again.
+static void serviceSlideshow(unsigned long nowMs) {
+    unsigned long slideMs = (unsigned long)config.current.slideMinutes * 60UL * 1000UL;
+    bool forced = forceRenderNow || lastSlideMs == 0;
+    bool changed = slidesChanged;
+    long requested = slideRequested;
+    if (!forced && !changed && !requested && nowMs - lastSlideMs < slideMs) return;
+    slidesChanged = false;
+    slideRequested = 0;
+    forceRenderNow = false;
+    lastSlideMs = nowMs;
+
+    std::vector<long> ids = slides.ids();
+    auto has = [&](long id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+    auto after = [&](long id) {
+        for (long i : ids) if (i > id) return i;
+        return ids.empty() ? 0L : ids.front();
+    };
+    long next;
+    if (requested && has(requested))          next = requested;
+    else if ((forced || changed) && has(currentSlideId)) next = currentSlideId;
+    else                                       next = after(currentSlideId);
+    if (!forced && next == currentSlideId) return;
+    currentSlideId = next;
+
+    if (next == 0) {
+        Serial.println("Rendering slideshow placeholder (no pictures)...");
+        epaperRenderSlideshowEmpty("http://" + WiFi.localIP().toString() + "/");
+    } else {
+        Serial.printf("Rendering slide %ld...\n", next);
+        epaperRenderSlide([next](size_t off, uint8_t* buf, size_t len) {
+            return slides.read(next, off, buf, len);
+        });
+    }
+    Serial.println("Render done");
+}
+
 void setup() {
     Serial.begin(115200);
     delay(300);
@@ -371,6 +426,7 @@ void setup() {
     epaperInit();
 
     config.begin();
+    slides.begin();
     celestrakRequests.begin();
     // Reads whether this is the first boot after an OTA (PENDING_VERIFY)
     // and the "just updated" breadcrumb - no network needed. The health
@@ -419,7 +475,7 @@ void setup() {
     // why this can't be done live inside the page's request handler.
     wifiSetup.refreshCache();
 
-    configWebServer.begin(config, onConfigSaved);
+    configWebServer.begin(config, onConfigSaved, onSlidesChanged);
     Serial.printf("Config page: http://%s/\n", WiFi.localIP().toString().c_str());
 }
 
@@ -479,7 +535,13 @@ void loop() {
     // n2yo too (the name may have improved), and redraw as soon as the whole
     // chain has finished. Launch date stays cached - it never changes - and
     // is only re-armed by the elements job if the object is different.
-    if (refetchRequested) {
+    // In slideshow mode a save only redraws - nothing satellite-related is
+    // on screen, so it isn't worth a CelesTrak request; the scheduled fetch
+    // keeps running and switching back to satellite mode is a save too.
+    if (refetchRequested && config.current.displayMode == DisplayMode::Slideshow) {
+        refetchRequested = false;
+        forceRenderNow = true;
+    } else if (refetchRequested) {
         refetchRequested = false;
         n2yoNameNorad = 0;
         n2yoNameCache = "";
@@ -570,6 +632,16 @@ void loop() {
     // next check - no restart needed, unlike WiFi/hostname changes.
     // forceRenderNow (set by onConfigSaved() above) makes a config-page
     // save redraw immediately instead of waiting for this interval.
+    if (config.current.displayMode == DisplayMode::Slideshow) {
+        serviceSlideshow(nowMs);
+        // Back in satellite mode the first render must come immediately,
+        // not after up to displayRefreshMinutes; the mode-switch save sets
+        // forceRenderNow, this covers anything else that changes the mode.
+        lastRenderMs = 0;
+        return;
+    }
+    lastSlideMs = 0;   // likewise: entering slideshow mode draws right away
+
     unsigned long renderIntervalMs = (unsigned long)config.current.displayRefreshMinutes * 60UL * 1000UL;
     if (forceRenderNow || nowMs - lastRenderMs >= renderIntervalMs || lastRenderMs == 0) {
         lastRenderMs = nowMs;

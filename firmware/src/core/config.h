@@ -7,6 +7,8 @@
 // Backed by ESP32 NVS via the Preferences library. Default satellite is the
 // ISS (25544) on first boot, per spec.
 
+enum class DisplayMode : int { Satellite = 0, Slideshow = 1 };
+
 struct DeviceConfig {
     String wifiSsid;
     String wifiPass;
@@ -22,6 +24,12 @@ struct DeviceConfig {
     // can be pointed at a local test server or a fork's releases (see
     // core/ota.h).
     String otaManifestUrl = OTA_DEFAULT_MANIFEST_URL;
+    // What the panel shows. The satellite pipeline (fetches, SGP4, trail)
+    // keeps running in slideshow mode so switching back is instant and the
+    // OTA health check still has its elements fetch to judge by - only the
+    // render differs. See core/slide_store.h.
+    DisplayMode displayMode = DisplayMode::Satellite;
+    int slideMinutes = 10;               // how long each picture stays (ignored with only one)
 };
 
 class ConfigStore {
