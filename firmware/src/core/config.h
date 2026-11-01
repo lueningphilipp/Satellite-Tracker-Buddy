@@ -29,7 +29,7 @@ struct DeviceConfig {
     // OTA health check still has its elements fetch to judge by - only the
     // render differs. See core/slide_store.h.
     DisplayMode displayMode = DisplayMode::Satellite;
-    int slideMinutes = 10;               // how long each picture stays (ignored with only one)
+    int slideSeconds = 600;              // how long each picture stays (ignored with only one)
 };
 
 class ConfigStore {

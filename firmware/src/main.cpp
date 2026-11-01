@@ -372,24 +372,33 @@ static long currentSlideId = 0;           // picture on the panel, 0 = none
 static unsigned long lastSlideMs = 0;
 static volatile bool slidesChanged = false;
 static volatile long slideRequested = 0;  // freshly uploaded picture to jump to
+static volatile int slideStep = 0;        // config page's Previous (-1) / Next (+1)
 
 static void onSlidesChanged(long showId) {
     if (showId > 0) slideRequested = showId;
     slidesChanged = true;
 }
 
-// Advances on the per-picture timer, jumps to a fresh upload, and moves on
-// if the picture on the panel was deleted. A single picture is never
-// redrawn by the timer - e-paper holds it without power, so a refresh would
-// only flash the same image again.
+static void onSlideStep(int dir) {
+    slideStep = dir < 0 ? -1 : 1;
+}
+
+// Advances on the per-picture timer, steps on the config page's
+// Previous/Next (which also restarts the timer, so the picture picked gets
+// its full time), jumps to a fresh upload, and moves on if the picture on
+// the panel was deleted. A single picture is never redrawn by the timer -
+// e-paper holds it without power, so a refresh would only flash the same
+// image again.
 static void serviceSlideshow(unsigned long nowMs) {
-    unsigned long slideMs = (unsigned long)config.current.slideMinutes * 60UL * 1000UL;
+    unsigned long slideMs = (unsigned long)config.current.slideSeconds * 1000UL;
     bool forced = forceRenderNow || lastSlideMs == 0;
     bool changed = slidesChanged;
     long requested = slideRequested;
-    if (!forced && !changed && !requested && nowMs - lastSlideMs < slideMs) return;
+    int step = slideStep;
+    if (!forced && !changed && !requested && !step && nowMs - lastSlideMs < slideMs) return;
     slidesChanged = false;
     slideRequested = 0;
+    slideStep = 0;
     forceRenderNow = false;
     lastSlideMs = nowMs;
 
@@ -399,12 +408,19 @@ static void serviceSlideshow(unsigned long nowMs) {
         for (long i : ids) if (i > id) return i;
         return ids.empty() ? 0L : ids.front();
     };
+    auto before = [&](long id) {
+        for (auto it = ids.rbegin(); it != ids.rend(); ++it) if (*it < id) return *it;
+        return ids.empty() ? 0L : ids.back();
+    };
     long next;
     if (requested && has(requested))          next = requested;
+    else if (step < 0)                         next = before(currentSlideId);
+    else if (step > 0)                         next = after(currentSlideId);
     else if ((forced || changed) && has(currentSlideId)) next = currentSlideId;
     else                                       next = after(currentSlideId);
     if (!forced && next == currentSlideId) return;
     currentSlideId = next;
+    slides.shownId = next;
 
     if (next == 0) {
         Serial.println("Rendering slideshow placeholder (no pictures)...");
@@ -475,7 +491,7 @@ void setup() {
     // why this can't be done live inside the page's request handler.
     wifiSetup.refreshCache();
 
-    configWebServer.begin(config, onConfigSaved, onSlidesChanged);
+    configWebServer.begin(config, onConfigSaved, onSlidesChanged, onSlideStep);
     Serial.printf("Config page: http://%s/\n", WiFi.localIP().toString().c_str());
 }
 

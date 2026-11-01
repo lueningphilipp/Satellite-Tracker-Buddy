@@ -20,12 +20,14 @@
 //
 // Slideshow pictures (see core/slide_store.h) are uploaded/deleted through
 // their own endpoints, outside the main form; `onSlidesChanged(newId)` tells
-// main.cpp the set changed (newId = a fresh upload to jump to, else 0).
+// main.cpp the set changed (newId = a fresh upload to jump to, else 0);
+// `onSlideStep(dir)` is the page's Previous (-1) / Next (+1) buttons.
 
 class ConfigWebServer {
 public:
     void begin(ConfigStore& store, std::function<void()> onConfigSaved,
-               std::function<void(long)> onSlidesChanged);
+               std::function<void(long)> onSlidesChanged,
+               std::function<void(int)> onSlideStep);
 };
 
 extern ConfigWebServer configWebServer;

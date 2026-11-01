@@ -50,6 +50,8 @@ legend{font-weight:bold;padding:0 .3em}
 .slide canvas{width:120px;height:72px;border:1px solid #ccc;flex:none}
 .slide span{flex:1;word-break:break-all}
 .del{background:#a22}
+.slide.shown canvas{outline:3px solid #284}
+.slide.shown span::after{content:" (on display)";color:#284;font-weight:bold}
 </style></head><body>
 <h2>Satellite Tracker Buddy</h2>
 <div class="status">
@@ -111,11 +113,23 @@ legend{font-weight:bold;padding:0 .3em}
   </fieldset>
 
   <fieldset id="slideSettings"><legend>Slideshow</legend>
-  <label>Minutes each picture stays on screen (with a single picture it
-  just stays up)</label>
-  <input name="slidemin" value="%SLIDEMIN%" type="number" min="1" max="1440" step="1">
+  <label>How long each picture stays on screen (with a single picture it
+  just stays up). 10 seconds minimum - every change is a full ~2.6s e-paper
+  refresh that visibly flashes.</label>
+  <div style="display:flex;gap:.5em">
+    <input name="slidetime" id="slidetime" value="%SLIDETIME%" type="number" min="1" step="1" style="flex:1">
+    <select name="slideunit" id="slideunit" onchange="unitChanged()" style="width:auto">
+      <option value="s" %UNITSEC%>seconds</option>
+      <option value="m" %UNITMIN%>minutes</option>
+    </select>
+  </div>
 
   <label id="slideCount">Pictures on the device</label>
+  <div>
+    <button type="button" onclick="step(-1)">&#9664; Previous</button>
+    <button type="button" onclick="step(1)">Next &#9654;</button>
+  </div>
+  <div id="navStatus" style="font-size:.85em;color:#555;margin:.3em 0"></div>
   <div id="slideList"></div>
 
   <label>Add pictures - converted to black and white 800x480 in this browser,
@@ -170,6 +184,32 @@ function pick(id){document.getElementById('norad').value=id;}
 // exact bytes the firmware draws (see core/slide_store.h).
 var W = 800, H = 480, listLoaded = false, listGen = 0;
 function $(id){ return document.getElementById(id); }
+// Switching the unit converts the number, so "10 minutes" becomes "600
+// seconds" rather than silently turning into 10 seconds.
+var slideUnit = $('slideunit').value;
+function unitChanged(){
+  var u = $('slideunit').value, t = $('slidetime'), v = +t.value || 0;
+  if (u == slideUnit) return;
+  t.value = u == 'm' ? Math.max(1, Math.round(v / 60)) : v * 60;
+  slideUnit = u;
+}
+// Previous/Next act on the device right away, independent of Save - but
+// only once slideshow mode has actually been saved.
+async function step(d){
+  var st = $('navStatus');
+  try {
+    var r = await fetch('/slides/step?dir=' + d, {method: 'POST'});
+    if (!r.ok) { st.textContent = await r.text(); return; }
+    st.textContent = 'Switching - the display takes a few seconds to redraw.';
+    setTimeout(markShown, 1500);
+  } catch (e) { st.textContent = 'Device unreachable.'; }
+}
+function applyShown(id){
+  document.querySelectorAll('.slide').forEach(function(r){ r.classList.toggle('shown', r.dataset.id == id); });
+}
+async function markShown(){
+  try { applyShown((await (await fetch('/slides/list')).json()).shown); } catch (e) {}
+}
 function showMode(){
   var slide = document.querySelector('input[name=mode]:checked').value == '1';
   $('satSettings').style.display = slide ? 'none' : '';
@@ -260,7 +300,7 @@ async function loadList(){
   el.innerHTML = '';
   var thumbs = [];
   d.slides.forEach(function(s){
-    var row = document.createElement('div'); row.className = 'slide';
+    var row = document.createElement('div'); row.className = 'slide'; row.dataset.id = s.id;
     var cv = document.createElement('canvas'); cv.width = 160; cv.height = 96;
     var name = document.createElement('span'); name.textContent = s.name || ('Picture ' + s.id);
     var del = document.createElement('button'); del.type = 'button'; del.className = 'del';
@@ -268,6 +308,7 @@ async function loadList(){
     row.appendChild(cv); row.appendChild(name); row.appendChild(del); el.appendChild(row);
     thumbs.push([s.id, cv]);
   });
+  applyShown(d.shown);
   // One at a time - 48KB each, no need to make the device serve them all at once.
   for (var t = 0; t < thumbs.length; t++) {
     if (gen != listGen) return;
@@ -276,6 +317,9 @@ async function loadList(){
       if (buf.byteLength == W * H / 8) drawBits(thumbs[t][1], new Uint8Array(buf));
     } catch (e) {}
   }
+  // After an upload/delete the device picks its new picture in loop(),
+  // usually after this list was fetched - refresh the marker once more.
+  if (gen == listGen) markShown();
 }
 showMode();
 function useMyLocation(){
@@ -361,7 +405,11 @@ static String renderPage(const DeviceConfig& cfg) {
     bool slideshow = cfg.displayMode == DisplayMode::Slideshow;
     page.replace("%MODESAT%", slideshow ? "" : "checked");
     page.replace("%MODESLIDE%", slideshow ? "checked" : "");
-    page.replace("%SLIDEMIN%", String(cfg.slideMinutes));
+    // Shown in whole minutes when it is one, else in seconds.
+    bool inMinutes = cfg.slideSeconds % 60 == 0;
+    page.replace("%SLIDETIME%", String(inMinutes ? cfg.slideSeconds / 60 : cfg.slideSeconds));
+    page.replace("%UNITSEC%", inMinutes ? "" : "selected");
+    page.replace("%UNITMIN%", inMinutes ? "selected" : "");
 
     // Firmware update status/button - see core/ota.h. The install button
     // only appears once a check has actually found a newer release, so a
@@ -405,7 +453,8 @@ static String renderPage(const DeviceConfig& cfg) {
 }
 
 void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSaved,
-                            std::function<void(long)> onSlidesChanged) {
+                            std::function<void(long)> onSlidesChanged,
+                            std::function<void(int)> onSlideStep) {
     server.on("/", HTTP_GET, [&store](AsyncWebServerRequest* req) {
         req->send(200, "text/html", renderPage(store.current));
     });
@@ -443,7 +492,7 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         json += "\"refreshMinutes\":" + String(store.current.displayRefreshMinutes) + ",";
         json += "\"fetchMinutes\":" + String(store.current.elementsFetchMinutes) + ",";
         json += "\"mode\":\"" + String(store.current.displayMode == DisplayMode::Slideshow ? "slideshow" : "satellite") + "\",";
-        json += "\"slideMinutes\":" + String(store.current.slideMinutes) + ",";
+        json += "\"slideSeconds\":" + String(store.current.slideSeconds) + ",";
         json += "\"slideCount\":" + String(slides.count()) + ",";
         json += "\"wifiSsid\":\"" + store.current.wifiSsid + "\",";
         json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
@@ -504,13 +553,15 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             store.current.displayMode = req->getParam("mode", true)->value() == "1"
                                             ? DisplayMode::Slideshow : DisplayMode::Satellite;
         }
-        if (req->hasParam("slidemin", true)) {
-            int mins = req->getParam("slidemin", true)->value().toInt();
-            // Same reasoning as the refresh clamp above: 0 would flash
-            // through the pictures as fast as the panel can refresh.
-            if (mins < 1) mins = 1;
-            if (mins > 1440) mins = 1440;
-            store.current.slideMinutes = mins;
+        if (req->hasParam("slidetime", true)) {
+            long secs = req->getParam("slidetime", true)->value().toInt();
+            if (req->hasParam("slideunit", true) && req->getParam("slideunit", true)->value() == "m")
+                secs *= 60;
+            // Same reasoning as the refresh clamp above: below ~10s the
+            // panel would spend most of its time mid-refresh, flashing.
+            if (secs < 10) secs = 10;
+            if (secs > 86400) secs = 86400;
+            store.current.slideSeconds = (int)secs;
         }
 
         // Hostname and WiFi changes only take effect on a fresh WiFi.begin()
@@ -568,7 +619,7 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
     // Not plain "/slides": ESPAsyncWebServer treats a path as a prefix
     // match, so that would also swallow GET /slides/raw.
     server.on("/slides/list", HTTP_GET, [](AsyncWebServerRequest* req) {
-        String json = "{\"max\":" + String(SLIDE_MAX) + ",\"slides\":[";
+        String json = "{\"max\":" + String(SLIDE_MAX) + ",\"shown\":" + String(slides.shownId) + ",\"slides\":[";
         bool first = true;
         for (const SlideInfo& s : slides.list()) {
             if (!first) json += ",";
@@ -622,6 +673,22 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
                 slides.discardUpload();
             }
         });
+
+    // Previous/Next - only a flag for loop(), like everything else here
+    // that ends in an e-paper redraw.
+    server.on("/slides/step", HTTP_POST, [&store, onSlideStep](AsyncWebServerRequest* req) {
+        if (store.current.displayMode != DisplayMode::Slideshow) {
+            req->send(409, "text/plain", "Slideshow mode isn't active on the device yet - select it and press Save first.");
+            return;
+        }
+        if (slides.count() < 2) {
+            req->send(409, "text/plain", "Needs at least two pictures to switch between.");
+            return;
+        }
+        int dir = req->hasParam("dir") && req->getParam("dir")->value().toInt() < 0 ? -1 : 1;
+        req->send(200, "text/plain", "ok");
+        if (onSlideStep) onSlideStep(dir);
+    });
 
     server.on("/slides/delete", HTTP_POST, [onSlidesChanged](AsyncWebServerRequest* req) {
         long id = req->hasParam("id") ? req->getParam("id")->value().toInt() : 0;

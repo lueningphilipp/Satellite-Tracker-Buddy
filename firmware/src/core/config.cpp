@@ -20,7 +20,7 @@ void ConfigStore::begin() {
     current.otaManifestUrl = prefs.getString("otaUrl", OTA_DEFAULT_MANIFEST_URL);
     if (current.otaManifestUrl.length() == 0) current.otaManifestUrl = OTA_DEFAULT_MANIFEST_URL;
     current.displayMode = prefs.getInt("mode", 0) == 1 ? DisplayMode::Slideshow : DisplayMode::Satellite;
-    current.slideMinutes = prefs.getInt("slideMin", 10);
+    current.slideSeconds = prefs.getInt("slideSec", 600);
     prefs.end();
 }
 
@@ -44,6 +44,6 @@ void ConfigStore::save() {
     prefs.putInt("fetchMin", current.elementsFetchMinutes);
     prefs.putString("otaUrl", current.otaManifestUrl);
     prefs.putInt("mode", (int)current.displayMode);
-    prefs.putInt("slideMin", current.slideMinutes);
+    prefs.putInt("slideSec", current.slideSeconds);
     prefs.end();
 }

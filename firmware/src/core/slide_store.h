@@ -70,6 +70,10 @@ public:
 
     size_t freeBytes();
 
+    // Picture currently on the panel (0 = none), set by main.cpp's
+    // serviceSlideshow() so the config page can mark it in the list.
+    volatile long shownId = 0;
+
 private:
     bool mounted_ = false;
     std::mutex mutex_;

@@ -136,9 +136,16 @@ effect, same as before.
 
 Pick **Slideshow** under Display mode on the config page, then:
 
-- **Minutes each picture stays on screen** - 1-1440, default 10. Saved with
-  the **Save** button. With a single picture it simply stays up - e-paper
-  keeps its image without power, so there's nothing to refresh.
+- **How long each picture stays on screen** - a number plus a
+  **seconds/minutes** selector (switching the unit converts the number).
+  10 seconds to 24 hours, default 10 minutes. Saved with the **Save**
+  button. With a single picture it simply stays up - e-paper keeps its
+  image without power, so there's nothing to refresh. Short times work,
+  but every change is a full ~2.6s refresh that visibly flashes.
+- **Previous / Next** - switch the picture on the display right away,
+  without saving anything (needs slideshow mode to be saved as the active
+  mode, and at least two pictures). The picked picture then gets its full
+  display time before the timer moves on.
 - **Add pictures** - choose one or more images (anything your browser can
   open: PNG, JPEG, ...). Your browser converts them to the panel's 800x480
   black and white before uploading, so the device never handles the
@@ -148,7 +155,8 @@ Pick **Slideshow** under Display mode on the config page, then:
   The preview shows exactly what the panel will display. **Upload** stores
   them right away (no Save needed) and puts the newest one on the display.
 - **Pictures on the device** - thumbnails of what's stored, in upload order,
-  each with a **Delete** button. Deleting the picture currently on screen
+  with the one currently on the display marked, each with a **Delete**
+  button. Deleting the picture currently on screen
   moves on to the next one.
 
 Up to **16 pictures** fit - well under what the storage area physically
