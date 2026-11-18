@@ -19,8 +19,9 @@
 // a big RAM spike on a board without PSRAM).
 //
 // Files: /slides/<id>.bin (pixels) + /slides/<id>.txt (original filename,
-// for the page's list). ids only ever increase, so sorting by id is upload
-// order.
+// for the page's list) + /slides/<id>.off (only while unticked, see
+// setActive()). New ids are always above the highest stored one, so sorting
+// by id is upload order.
 //
 // Thread safety: the web handlers (async_tcp task) commit/delete pictures
 // while loop() reads them for rendering, so every operation that touches
@@ -38,6 +39,7 @@ static const int SLIDE_MAX = 16;
 struct SlideInfo {
     long id;
     String name;
+    bool active;   // part of the rotation; unticked ones stay stored but aren't shown
 };
 
 class SlideStore {
@@ -50,6 +52,11 @@ public:
 
     std::vector<SlideInfo> list();   // sorted by id (upload order)
     std::vector<long> ids();         // same order, without reading the name files
+    std::vector<long> activeIds();   // just the ones in the rotation
+    // Ticks/unticks a picture on the config page. Inactive = an empty
+    // /slides/<id>.off marker next to it, so pictures stored before this
+    // existed (no marker) count as active with no migration step.
+    bool setActive(long id, bool active);
     int count();
     bool hasRoom();                  // below SLIDE_MAX and enough free flash for one more
 

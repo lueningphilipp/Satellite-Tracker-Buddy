@@ -52,6 +52,7 @@ legend{font-weight:bold;padding:0 .3em}
 .del{background:#a22}
 .slide.shown canvas{outline:3px solid #284}
 .slide.shown span::after{content:" (on display)";color:#284;font-weight:bold}
+.slide.off canvas,.slide.off span{opacity:.4}
 </style></head><body>
 <h2>Satellite Tracker Buddy</h2>
 <div class="status">
@@ -290,24 +291,52 @@ async function delPic(id){
   await fetch('/slides/delete?id=' + id, {method: 'POST'});
   loadList();
 }
+// Ticked = part of the rotation. Toggling is stored right away (no Save),
+// without reloading the list - the thumbnails are 48KB each.
+var slideMax = 0;
+function updateCount(){
+  var ticks = document.querySelectorAll('.slide input'), on = 0;
+  ticks.forEach(function(t){ if (t.checked) on++; });
+  $('slideCount').textContent = 'Pictures on the device: ' + ticks.length + ' / ' + slideMax
+    + ' - ' + on + ' ticked to show in the slideshow';
+}
+async function setActive(id, tick){
+  var st = $('navStatus');
+  try {
+    var r = await fetch('/slides/active?id=' + id + '&on=' + (tick.checked ? 1 : 0), {method: 'POST'});
+    if (!r.ok) throw 0;
+    tick.parentNode.classList.toggle('off', !tick.checked);
+    updateCount();
+    setTimeout(markShown, 1500);
+  } catch (e) {
+    tick.checked = !tick.checked;
+    st.textContent = 'Could not change that picture - device unreachable?';
+  }
+}
 async function loadList(){
   var gen = ++listGen, el = $('slideList');
   var d;
   try { d = await (await fetch('/slides/list')).json(); }
   catch (e) { el.textContent = 'Could not load the picture list.'; return; }
   if (gen != listGen) return;
-  $('slideCount').textContent = 'Pictures on the device: ' + d.slides.length + ' / ' + d.max;
+  slideMax = d.max;
   el.innerHTML = '';
   var thumbs = [];
   d.slides.forEach(function(s){
     var row = document.createElement('div'); row.className = 'slide'; row.dataset.id = s.id;
+    var tick = document.createElement('input'); tick.type = 'checkbox'; tick.checked = s.active;
+    tick.title = 'Show in the slideshow';
+    tick.onchange = function(){ setActive(s.id, tick); };
+    row.classList.toggle('off', !s.active);
     var cv = document.createElement('canvas'); cv.width = 160; cv.height = 96;
     var name = document.createElement('span'); name.textContent = s.name || ('Picture ' + s.id);
     var del = document.createElement('button'); del.type = 'button'; del.className = 'del';
     del.textContent = 'Delete'; del.onclick = function(){ delPic(s.id); };
-    row.appendChild(cv); row.appendChild(name); row.appendChild(del); el.appendChild(row);
+    row.appendChild(tick); row.appendChild(cv); row.appendChild(name); row.appendChild(del);
+    el.appendChild(row);
     thumbs.push([s.id, cv]);
   });
+  updateCount();
   applyShown(d.shown);
   // One at a time - 48KB each, no need to make the device serve them all at once.
   for (var t = 0; t < thumbs.length; t++) {
@@ -624,7 +653,8 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
         for (const SlideInfo& s : slides.list()) {
             if (!first) json += ",";
             first = false;
-            json += "{\"id\":" + String(s.id) + ",\"name\":\"" + s.name + "\"}";
+            json += "{\"id\":" + String(s.id) + ",\"name\":\"" + s.name
+                    + "\",\"active\":" + (s.active ? "true" : "false") + "}";
         }
         json += "]}";
         req->send(200, "application/json", json);
@@ -681,13 +711,23 @@ void ConfigWebServer::begin(ConfigStore& store, std::function<void()> onConfigSa
             req->send(409, "text/plain", "Slideshow mode isn't active on the device yet - select it and press Save first.");
             return;
         }
-        if (slides.count() < 2) {
-            req->send(409, "text/plain", "Needs at least two pictures to switch between.");
+        if (slides.activeIds().size() < 2) {
+            req->send(409, "text/plain", "Needs at least two ticked pictures to switch between.");
             return;
         }
         int dir = req->hasParam("dir") && req->getParam("dir")->value().toInt() < 0 ? -1 : 1;
         req->send(200, "text/plain", "ok");
         if (onSlideStep) onSlideStep(dir);
+    });
+
+    // Tick/untick a picture for the rotation (one tiny marker-file write).
+    // Unticking the picture on display moves on via loop(), like a delete.
+    server.on("/slides/active", HTTP_POST, [onSlidesChanged](AsyncWebServerRequest* req) {
+        long id = req->hasParam("id") ? req->getParam("id")->value().toInt() : 0;
+        bool on = req->hasParam("on") && req->getParam("on")->value() == "1";
+        if (id <= 0 || !slides.setActive(id, on)) { req->send(404, "text/plain", "no such picture"); return; }
+        req->send(200, "text/plain", on ? "active" : "inactive");
+        if (onSlidesChanged) onSlidesChanged(0);
     });
 
     server.on("/slides/delete", HTTP_POST, [onSlidesChanged](AsyncWebServerRequest* req) {

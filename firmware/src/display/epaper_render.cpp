@@ -276,7 +276,7 @@ void epaperRenderSlide(std::function<bool(size_t offset, uint8_t* buf, size_t le
     } while (display.nextPage());
 }
 
-void epaperRenderSlideshowEmpty(const String& configUrl) {
+void epaperRenderSlideshowEmpty(const String& configUrl, bool anyStored) {
     // Version 3 holds up to 53 bytes at ECC_LOW - plenty for
     // "http://255.255.255.255/". 4px/module, same as the setup screen.
     const uint8_t qrVersion = 3;
@@ -293,13 +293,14 @@ void epaperRenderSlideshowEmpty(const String& configUrl) {
         display.setTextColor(GxEPD_BLACK);
         display.setFont(&FreeSansBold18pt7b);
         display.setCursor(40, 65);
-        display.print("Slideshow: no pictures yet");
+        display.print(anyStored ? "Slideshow: no pictures ticked" : "Slideshow: no pictures yet");
         display.drawFastHLine(40, 85, W - 80, GxEPD_BLACK);
         display.drawFastHLine(40, 86, W - 80, GxEPD_BLACK);
 
         display.setFont(&FreeSans12pt7b);
         display.setCursor(40, 150);
-        display.print("Upload pictures on the config page:");
+        display.print(anyStored ? "Tick pictures to show on the config page:"
+                                : "Upload pictures on the config page:");
         display.setFont(&FreeSansBold12pt7b);
         display.setCursor(40, 185);
         display.print(configUrl);

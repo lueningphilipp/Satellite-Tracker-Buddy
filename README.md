@@ -144,7 +144,7 @@ Pick **Slideshow** under Display mode on the config page, then:
   but every change is a full ~2.6s refresh that visibly flashes.
 - **Previous / Next** - switch the picture on the display right away,
   without saving anything (needs slideshow mode to be saved as the active
-  mode, and at least two pictures). The picked picture then gets its full
+  mode, and at least two ticked pictures). The picked picture then gets its full
   display time before the timer moves on.
 - **Add pictures** - choose one or more images (anything your browser can
   open: PNG, JPEG, ...). Your browser converts them to the panel's 800x480
@@ -156,7 +156,11 @@ Pick **Slideshow** under Display mode on the config page, then:
   them right away (no Save needed) and puts the newest one on the display.
 - **Pictures on the device** - thumbnails of what's stored, in upload order,
   with the one currently on the display marked, each with a **Delete**
-  button. Deleting the picture currently on screen
+  button and a **tick box**. Only ticked pictures are part of the slideshow;
+  untick one to take it out of the rotation without deleting it, tick it
+  again to bring it back. Changes apply right away (no Save needed), and
+  unticking the picture currently on the display moves on to the next one.
+  New uploads start ticked. If nothing is ticked, the display says so. Deleting the picture currently on screen
   moves on to the next one.
 
 Up to **16 pictures** fit - well under what the storage area physically

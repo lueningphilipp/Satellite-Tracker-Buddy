@@ -42,30 +42,42 @@ bool SlideStore::begin() {
     return true;
 }
 
+static String offPath(long id) {
+    return String(DIR) + "/" + String(id) + ".off";
+}
+
+// One directory walk for both the pictures and their "inactive" markers -
+// probing each <id>.off with exists() would log an error per active picture.
 // Caller holds mutex_.
-static std::vector<long> listIds() {
+static std::vector<long> listIds(std::vector<long>* inactive = nullptr) {
     std::vector<long> ids;
     File dir = LittleFS.open(DIR);
     if (!dir || !dir.isDirectory()) return ids;
     for (String p = dir.getNextFileName(); p.length(); p = dir.getNextFileName()) {
-        if (!p.endsWith(".bin")) continue;
-        String base = p.substring(p.lastIndexOf('/') + 1);
-        long id = base.toInt();
-        if (id > 0) ids.push_back(id);
+        bool bin = p.endsWith(".bin"), off = p.endsWith(".off");
+        if (!bin && !(off && inactive)) continue;
+        long id = p.substring(p.lastIndexOf('/') + 1).toInt();
+        if (id <= 0) continue;
+        (bin ? ids : *inactive).push_back(id);
     }
     std::sort(ids.begin(), ids.end());
     return ids;
+}
+
+static bool contains(const std::vector<long>& v, long id) {
+    return std::find(v.begin(), v.end(), id) != v.end();
 }
 
 std::vector<SlideInfo> SlideStore::list() {
     std::vector<SlideInfo> out;
     if (!mounted_) return out;
     std::lock_guard<std::mutex> lock(mutex_);
-    for (long id : listIds()) {
+    std::vector<long> inactive;
+    for (long id : listIds(&inactive)) {
         String name;
         File f = LittleFS.open(namePath(id), FILE_READ);
         if (f) { name = f.readString(); f.close(); }
-        out.push_back({id, name});
+        out.push_back({id, name, !contains(inactive, id)});
     }
     return out;
 }
@@ -74,6 +86,30 @@ std::vector<long> SlideStore::ids() {
     if (!mounted_) return {};
     std::lock_guard<std::mutex> lock(mutex_);
     return listIds();
+}
+
+std::vector<long> SlideStore::activeIds() {
+    if (!mounted_) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<long> inactive, active;
+    for (long id : listIds(&inactive))
+        if (!contains(inactive, id)) active.push_back(id);
+    return active;
+}
+
+bool SlideStore::setActive(long id, bool active) {
+    if (!mounted_) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<long> inactive;
+    std::vector<long> all = listIds(&inactive);
+    if (!contains(all, id)) return false;
+    bool isActive = !contains(inactive, id);
+    if (active == isActive) return true;
+    if (active) return LittleFS.remove(offPath(id));
+    File f = LittleFS.open(offPath(id), FILE_WRITE);   // empty marker file
+    if (!f) return false;
+    f.close();
+    return true;
 }
 
 int SlideStore::count() {
@@ -109,12 +145,16 @@ long SlideStore::commitUpload(const String& name) {
     File tmp = LittleFS.open(UPLOAD_TMP, FILE_READ);
     size_t size = tmp ? tmp.size() : 0;
     if (tmp) tmp.close();
-    std::vector<long> ids = listIds();
+    std::vector<long> inactive;
+    std::vector<long> ids = listIds(&inactive);
     if (size != SLIDE_BYTES || (int)ids.size() >= SLIDE_MAX) {
         LittleFS.remove(UPLOAD_TMP);
         return -1;
     }
     long id = ids.empty() ? 1 : ids.back() + 1;
+    // New uploads start ticked, even if a marker outlived an old picture
+    // with this id.
+    if (contains(inactive, id)) LittleFS.remove(offPath(id));
     if (!LittleFS.rename(UPLOAD_TMP, path(id))) {
         LittleFS.remove(UPLOAD_TMP);
         return -1;
@@ -127,6 +167,9 @@ long SlideStore::commitUpload(const String& name) {
 bool SlideStore::remove(long id) {
     if (!mounted_) return false;
     std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<long> inactive;
+    listIds(&inactive);
+    if (contains(inactive, id)) LittleFS.remove(offPath(id));
     LittleFS.remove(namePath(id));
     return LittleFS.remove(path(id));
 }

@@ -402,8 +402,10 @@ static void serviceSlideshow(unsigned long nowMs) {
     forceRenderNow = false;
     lastSlideMs = nowMs;
 
-    std::vector<long> ids = slides.ids();
-    auto has = [&](long id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+    // Unticked pictures stay stored but are skipped entirely - unticking the
+    // one on display moves on just like deleting it does.
+    std::vector<long> ids = slides.activeIds();
+    auto has =[&](long id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
     auto after = [&](long id) {
         for (long i : ids) if (i > id) return i;
         return ids.empty() ? 0L : ids.front();
@@ -423,8 +425,10 @@ static void serviceSlideshow(unsigned long nowMs) {
     slides.shownId = next;
 
     if (next == 0) {
-        Serial.println("Rendering slideshow placeholder (no pictures)...");
-        epaperRenderSlideshowEmpty("http://" + WiFi.localIP().toString() + "/");
+        bool anyStored = slides.count() > 0;
+        Serial.printf("Rendering slideshow placeholder (%s)...\n",
+                      anyStored ? "none ticked" : "no pictures");
+        epaperRenderSlideshowEmpty("http://" + WiFi.localIP().toString() + "/", anyStored);
     } else {
         Serial.printf("Rendering slide %ld...\n", next);
         epaperRenderSlide([next](size_t off, uint8_t* buf, size_t len) {

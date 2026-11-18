@@ -49,9 +49,10 @@ void epaperRenderSetup(const char* apSsid, const String& apIp, const String& fai
 // the rest white. Firmware-only - the demo has no slideshow.
 void epaperRenderSlide(std::function<bool(size_t offset, uint8_t* buf, size_t len)> readRows);
 
-// Slideshow mode with no pictures stored yet: says so, plus the config-page
-// address and a QR to it, so the user knows where to upload.
-void epaperRenderSlideshowEmpty(const String& configUrl);
+// Slideshow mode with nothing to show - no pictures stored yet, or
+// (anyStored) all of them unticked: says which, plus the config-page
+// address and a QR to it, so the user knows where to fix it.
+void epaperRenderSlideshowEmpty(const String& configUrl, bool anyStored);
 
 void epaperRender(Sgp4Track& track, const OrbitalElements& el,
                    const TrailBuffer& trail, time_t now, bool online,
